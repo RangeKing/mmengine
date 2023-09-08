@@ -1136,8 +1136,10 @@ class NeptuneVisBackend(BaseVisBackend):
 class AimVisBackend(BaseVisBackend):
     """"""
 
-    def __init__(self, save_dir: str, init_kwargs: Optional[dict] = None):
-        super().__init__(save_dir)
+    def __init__(self,
+                 save_dir: Optional[str] = None,
+                 init_kwargs: Optional[dict] = None):
+        super().__init__(save_dir)  # type:ignore
         self._init_kwargs = init_kwargs
 
     def _init_env(self):
@@ -1148,9 +1150,16 @@ class AimVisBackend(BaseVisBackend):
         except ImportError:
             raise ImportError('Please run "pip install aim" to install aim')
 
-        self._aim_run = Run(
-            experiment=os.path.basename(os.path.normpath(self._save_dir)),
-            **self._init_kwargs)  # type: ignore
+        from datetime import datetime
+
+        exp_name = os.path.basename(os.path.normpath(self._save_dir)) \
+            if self._save_dir is not None \
+            else datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        if self._init_kwargs is None:
+            self._init_kwargs = {}
+        self._init_kwargs.setdefault('experiment', exp_name)
+        self._aim_run = Run(**self._init_kwargs)
 
     @property  # type: ignore
     @force_init_env
