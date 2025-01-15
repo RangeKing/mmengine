@@ -1,10 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import importlib
 import os.path as osp
 import subprocess
-
-import pkg_resources
-from pkg_resources import get_distribution
 
 
 def is_installed(package: str) -> bool:
@@ -13,6 +9,14 @@ def is_installed(package: str) -> bool:
     Args:
         package (str): Name of package to be checked.
     """
+    # When executing `import mmengine.runner`,
+    # pkg_resources will be imported and it takes too much time.
+    # Therefore, import it in function scope to save time.
+    import importlib.util
+
+    import pkg_resources
+    from pkg_resources import get_distribution
+
     # refresh the pkg_resources
     # more datails at https://github.com/pypa/setuptools/issues/373
     importlib.reload(pkg_resources)
@@ -20,7 +24,13 @@ def is_installed(package: str) -> bool:
         get_distribution(package)
         return True
     except pkg_resources.DistributionNotFound:
-        return False
+        spec = importlib.util.find_spec(package)
+        if spec is None:
+            return False
+        elif spec.origin is not None:
+            return True
+        else:
+            return False
 
 
 def get_installed_path(package: str) -> str:
@@ -33,16 +43,37 @@ def get_installed_path(package: str) -> str:
         >>> get_installed_path('mmcls')
         >>> '.../lib/python3.7/site-packages/mmcls'
     """
+    import importlib.util
+
+    from pkg_resources import DistributionNotFound, get_distribution
+
     # if the package name is not the same as module name, module name should be
     # inferred. For example, mmcv-full is the package name, but mmcv is module
     # name. If we want to get the installed path of mmcv-full, we should concat
     # the pkg.location and module name
-    pkg = get_distribution(package)
-    possible_path = osp.join(pkg.location, package)
+    try:
+        pkg = get_distribution(package)
+    except DistributionNotFound as e:
+        # if the package is not installed, package path set in PYTHONPATH
+        # can be detected by `find_spec`
+        spec = importlib.util.find_spec(package)
+        if spec is not None:
+            if spec.origin is not None:
+                return osp.dirname(spec.origin)
+            else:
+                # `get_installed_path` cannot get the installed path of
+                # namespace packages
+                raise RuntimeError(
+                    f'{package} is a namespace package, which is invalid '
+                    'for `get_install_path`')
+        else:
+            raise e
+
+    possible_path = osp.join(pkg.location, package)  # type: ignore
     if osp.exists(possible_path):
         return possible_path
     else:
-        return osp.join(pkg.location, package2module(package))
+        return osp.join(pkg.location, package2module(package))  # type: ignore
 
 
 def package2module(package: str):
@@ -51,6 +82,7 @@ def package2module(package: str):
     Args:
         package (str): Package to infer module name.
     """
+    from pkg_resources import get_distribution
     pkg = get_distribution(package)
     if pkg.has_metadata('top_level.txt'):
         module_name = pkg.get_metadata('top_level.txt').split('\n')[0]

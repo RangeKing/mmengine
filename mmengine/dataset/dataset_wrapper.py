@@ -1,13 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import bisect
 import copy
+import logging
 import math
-import warnings
 from collections import defaultdict
 from typing import List, Sequence, Tuple, Union
 
+import numpy as np
 from torch.utils.data.dataset import ConcatDataset as _ConcatDataset
 
+from mmengine.logging import print_log
 from mmengine.registry import DATASETS
 from .base_dataset import BaseDataset, force_full_init
 
@@ -72,7 +74,18 @@ class ConcatDataset(_ConcatDataset):
                     raise ValueError(
                         f'{key} does not in the meta information of '
                         f'the {i}-th dataset')
-                if self._metainfo[key] != dataset.metainfo[key]:
+                first_type = type(self._metainfo[key])
+                cur_type = type(dataset.metainfo[key])
+                if first_type is not cur_type:  # type: ignore
+                    raise TypeError(
+                        f'The type {cur_type} of {key} in the {i}-th dataset '
+                        'should be the same with the first dataset '
+                        f'{first_type}')
+                if (isinstance(self._metainfo[key], np.ndarray)
+                        and not np.array_equal(self._metainfo[key],
+                                               dataset.metainfo[key])
+                        or (not isinstance(self._metainfo[key], np.ndarray)
+                            and self._metainfo[key] != dataset.metainfo[key])):
                     raise ValueError(
                         f'The meta information of the {i}-th dataset does not '
                         'match meta information of the first dataset')
@@ -148,8 +161,11 @@ class ConcatDataset(_ConcatDataset):
 
     def __getitem__(self, idx):
         if not self._fully_initialized:
-            warnings.warn('Please call `full_init` method manually to '
-                          'accelerate the speed.')
+            print_log(
+                'Please call `full_init` method manually to '
+                'accelerate the speed.',
+                logger='current',
+                level=logging.WARNING)
             self.full_init()
         dataset_idx, sample_idx = self._get_ori_dataset_idx(idx)
         return self.datasets[dataset_idx][sample_idx]
@@ -263,8 +279,11 @@ class RepeatDataset:
 
     def __getitem__(self, idx):
         if not self._fully_initialized:
-            warnings.warn('Please call `full_init` method manually to '
-                          'accelerate the speed.')
+            print_log(
+                'Please call `full_init` method manually to accelerate the '
+                'speed.',
+                logger='current',
+                level=logging.WARNING)
             self.full_init()
 
         sample_idx = self._get_ori_dataset_idx(idx)
@@ -422,12 +441,16 @@ class ClassBalancedDataset:
         #    r(I) = max_{c in L(I)} r(c)
         repeat_factors = []
         for idx in range(num_images):
+            # the length of `repeat_factors` need equal to the length of
+            # dataset. Hence, if the `cat_ids` is empty,
+            # the repeat_factor should be 1.
+            repeat_factor: float = 1.
             cat_ids = set(self.dataset.get_cat_ids(idx))
             if len(cat_ids) != 0:
                 repeat_factor = max(
                     {category_repeat[cat_id]
                      for cat_id in cat_ids})
-                repeat_factors.append(repeat_factor)
+            repeat_factors.append(repeat_factor)
 
         return repeat_factors
 
@@ -470,9 +493,12 @@ class ClassBalancedDataset:
         return self.dataset.get_data_info(sample_idx)
 
     def __getitem__(self, idx):
-        warnings.warn('Please call `full_init` method manually to '
-                      'accelerate the speed.')
         if not self._fully_initialized:
+            print_log(
+                'Please call `full_init` method manually to accelerate '
+                'the speed.',
+                logger='current',
+                level=logging.WARNING)
             self.full_init()
 
         ori_index = self._get_ori_dataset_idx(idx)

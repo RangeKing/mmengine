@@ -31,11 +31,12 @@ MMEngine 提供了很多内置的钩子，将钩子分为两类，分别是默�
 
 **自定义钩子**
 
-|                名称                 |         用途          |   优先级    |
-| :---------------------------------: | :-------------------: | :---------: |
-|         [EMAHook](#emahook)         | 模型参数指数滑动平均  | NORMAL (50) |
-|  [EmptyCacheHook](#emptycachehook)  | PyTorch CUDA 缓存清理 | NORMAL (50) |
-| [SyncBuffersHook](#syncbuffershook) |   同步模型的 buffer   | NORMAL (50) |
+|                名称                 |                用途                |    优先级     |
+| :---------------------------------: | :--------------------------------: | :-----------: |
+|         [EMAHook](#emahook)         |        模型参数指数滑动平均        |  NORMAL (50)  |
+|  [EmptyCacheHook](#emptycachehook)  |       PyTorch CUDA 缓存清理        |  NORMAL (50)  |
+| [SyncBuffersHook](#syncbuffershook) |         同步模型的 buffer          |  NORMAL (50)  |
+|    [ProfilerHook](#profilerhook)    | 分析算子的执行时间以及显存占用情况 | VERY_LOW (90) |
 
 ```{note}
 不建议修改默认钩子的优先级，因为优先级低的钩子可能会依赖优先级高的钩子。例如 CheckpointHook 的优先级需要比 ParamSchedulerHook 低，这样保存的优化器状态才是正确的状态。另外，自定义钩子的优先级默认为 `NORMAL (50)`。
@@ -71,10 +72,12 @@ runner.train()
 - 保存最新的多个权重
 - 保存最优权重
 - 指定保存权重的路径
+- 制作发布用的权重
+- 设置开始保存权重的 epoch 数或者 iteration 数
 
 如需了解其他功能，请阅读 [CheckpointHook API 文档](mmengine.hooks.CheckpointHook)。
 
-下面介绍上面提到的 4 个功能。
+下面介绍上面提到的 6 个功能。
 
 - 按照间隔保存权重，支持按 epoch 数或者 iteration 数保存权重
 
@@ -121,6 +124,22 @@ runner.train()
   default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=5, out_dir='/path/of/directory'))
   ```
 
+- 制作发布用的权重
+
+  如果你想在训练结束后自动生成可发布的权重（删除不需要的权重，例如优化器状态），你可以设置 `published_keys` 参数，选择需要保留的信息。注意：需要相应设置 `save_best` 或者 `save_last` 参数，这样才会生成可发布的权重，其中设置 `save_best` 会生成最优权重的可发布权重，设置 `save_last` 会生成最后一个权重的可发布权重，这两个参数也可同时设置。
+
+  ```python
+  default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1, save_best='accuracy', rule='less', published_keys=['meta', 'state_dict']))
+  ```
+
+- 设置开始保存权重的 epoch 数或者 iteration 数
+
+  如果想要设置控制开始保存权重的 epoch 数或者 iteration 数，可以设置 `save_begin` 参数，默认为 0，表示从训练开始就保存权重。例如，如果总共训练 10 个 epoch，并且 `save_begin` 设置为 5，则将保存第 5、6、7、8、9 和 10 个 epoch 的权重。如果 `interval=2`，则仅保存第 5、7 和 9 个 epoch 的权重。
+
+  ```python
+  default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=2, save_begin=5))
+  ```
+
 ### LoggerHook
 
 [LoggerHook](mmengine.hooks.LoggerHook) 负责收集日志并把日志输出到终端或者输出到文件、TensorBoard 等后端。
@@ -131,7 +150,7 @@ runner.train()
 default_hooks = dict(logger=dict(type='LoggerHook', interval=20))
 ```
 
-如果你对日志的管理感兴趣，可以阅读[记录日志（logging）](logging.md)。
+如果你对日志的管理感兴趣，可以阅读[记录日志（logging）](../advanced_tutorials/logging.md)。
 
 ### ParamSchedulerHook
 
@@ -188,6 +207,20 @@ runner = Runner(custom_hooks=custom_hooks, ...)
 runner.train()
 ```
 
+### ProfilerHook
+
+[ProfilerHook](mmengine.hooks.ProfilerHook) 用于分析模型算子的执行时间以及显存占用情况。
+
+```python
+custom_hooks = [dict(type='ProfilerHook', on_trace_ready=dict(type='tb_trace'))]
+runner = Runner(custom_hooks=custom_hooks, ...)
+runner.train()
+```
+
+profile 的结果会保存在 `work_dirs/{timestamp}` 下的 `tf_tracing_logs` 目录，通过 `tensorboard --logdir work_dirs/{timestamp}tf_tracing_logs`。
+
+更多关于 ProfilerHook 的用法请阅读 [ProfilerHook](mmengine.hooks.ProfilerHook) 文档。
+
 ## 自定义钩子
 
 如果 MMEngine 提供的默认钩子不能满足需求，用户可以自定义钩子，只需继承钩子基类并重写相应的位点方法。
@@ -236,9 +269,9 @@ class CheckInvalidLossHook(Hook):
 ```python
 from mmengine.runner import Runner
 
-custom_hooks = dict(
+custom_hooks = [
     dict(type='CheckInvalidLossHook', interval=50)
-)
+]
 runner = Runner(custom_hooks=custom_hooks, ...)  # 实例化执行器，主要完成环境的初始化以及各种模块的构建
 runner.train()  # 执行器开始训练
 ```
@@ -248,9 +281,9 @@ runner.train()  # 执行器开始训练
 注意，自定义钩子的优先级默认为 `NORMAL (50)`，如果想改变钩子的优先级，则可以在配置中设置 priority 字段。
 
 ```python
-custom_hooks = dict(
+custom_hooks = [
     dict(type='CheckInvalidLossHook', interval=50, priority='ABOVE_NORMAL')
-)
+]
 ```
 
 也可以在定义类时给定优先级
@@ -262,4 +295,4 @@ class CheckInvalidLossHook(Hook):
     priority = 'ABOVE_NORMAL'
 ```
 
-你可能还想阅读[钩子的设计](../design/hook.md)或者[钩子的 API 文档](mmengine.hooks)。
+你可能还想阅读[钩子的设计](../design/hook.md)或者[钩子的 API 文档](../api/hooks)。

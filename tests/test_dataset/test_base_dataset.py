@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+from mmengine.config import Config, ConfigDict
 from mmengine.dataset import (BaseDataset, ClassBalancedDataset, Compose,
                               ConcatDataset, RepeatDataset, force_full_init)
 from mmengine.registry import DATASETS, TRANSFORMS
@@ -34,7 +35,7 @@ class CustomDataset(BaseDataset):
 
 class TestBaseDataset:
 
-    def setup(self):
+    def setup_method(self):
         self.data_info = dict(
             filename='test_img.jpg', height=604, width=640, sample_idx=0)
         self.imgs = torch.rand((2, 3, 32, 32))
@@ -43,7 +44,7 @@ class TestBaseDataset:
         BaseDataset.parse_data_info = MagicMock(return_value=self.data_info)
         self.pipeline = MagicMock(return_value=dict(imgs=self.imgs))
 
-    def teardown(self):
+    def teardown_method(self):
         BaseDataset.METAINFO = self.ori_meta
         BaseDataset.parse_data_info = self.ori_parse_data_info
 
@@ -159,6 +160,9 @@ class TestBaseDataset:
             lazy_init=True)
         assert not dataset.ann_file
 
+        # Test `ann_file` and `data_root` could be None.
+        dataset = BaseDataset(ann_file=None, data_root=None, lazy_init=True)
+
     def test_meta(self):
         # test dataset.metainfo with setting the metainfo from annotation file
         # as the metainfo of self.base_dataset.
@@ -199,6 +203,39 @@ class TestBaseDataset:
             task_name='new_task',
             classes=('dog', ),
             empty_list=[])
+
+        # test dataset.metainfo with passing metainfo as Config into
+        # self.base_dataset
+        metainfo = Config(dict(classes=('dog', ), task_name='new_task'))
+        dataset = BaseDataset(
+            data_root=osp.join(osp.dirname(__file__), '../data/'),
+            data_prefix=dict(img_path='imgs'),
+            ann_file='annotations/dummy_annotation.json',
+            metainfo=metainfo)
+        assert BaseDataset.METAINFO == dict(
+            dataset_type=dataset_type, classes=('dog', 'cat'))
+        assert dataset.metainfo == dict(
+            dataset_type=dataset_type,
+            task_name='new_task',
+            classes=('dog', ),
+            empty_list=[])
+
+        # test dataset.metainfo with passing metainfo as ConfigDict (Mapping)
+        # into self.base_dataset
+        metainfo = ConfigDict(dict(classes=('dog', ), task_name='new_task'))
+        dataset = BaseDataset(
+            data_root=osp.join(osp.dirname(__file__), '../data/'),
+            data_prefix=dict(img_path='imgs'),
+            ann_file='annotations/dummy_annotation.json',
+            metainfo=metainfo)
+        assert BaseDataset.METAINFO == dict(
+            dataset_type=dataset_type, classes=('dog', 'cat'))
+        assert dataset.metainfo == dict(
+            dataset_type=dataset_type,
+            task_name='new_task',
+            classes=('dog', ),
+            empty_list=[])
+
         # reset `base_dataset.METAINFO`, the `dataset.metainfo` should not
         # change
         BaseDataset.METAINFO['classes'] = ('dog', 'cat', 'fish')
@@ -595,7 +632,7 @@ class TestBaseDataset:
 
 class TestConcatDataset:
 
-    def setup(self):
+    def setup_method(self):
         dataset = BaseDataset
 
         # create dataset_a
@@ -726,7 +763,7 @@ class TestConcatDataset:
 
 class TestRepeatDataset:
 
-    def setup(self):
+    def setup_method(self):
         dataset = BaseDataset
         data_info = dict(filename='test_img.jpg', height=604, width=640)
         dataset.parse_data_info = MagicMock(return_value=data_info)
@@ -797,7 +834,7 @@ class TestRepeatDataset:
 
 class TestClassBalancedDataset:
 
-    def setup(self):
+    def setup_method(self):
         dataset = BaseDataset
         data_info = dict(filename='test_img.jpg', height=604, width=640)
         dataset.parse_data_info = MagicMock(return_value=data_info)

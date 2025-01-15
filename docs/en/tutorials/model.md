@@ -2,7 +2,7 @@
 
 ## Runner and model
 
-As mentioned in [basic dataflow](./runner.md#bassic-dataflow), the dataflow between DataLoader, model and evaluator follows some rules. Don't remember clearly? Let's review it:
+As mentioned in [basic dataflow](./runner.md#basic-dataflow), the dataflow between DataLoader, model and evaluator follows some rules. Don't remember clearly? Let's review it:
 
 ```python
 # Training process
@@ -43,7 +43,7 @@ Usually, we should define a model to implement the body of the algorithm. In MME
 Benefits from the `BaseModel`, we only need to make the model inherit from `BaseModel`, and implement the `forward` function to perform the training, testing, and validation process.
 
 ```{note}
-BaseModel inherits from [BaseModule](../advanced_tutorials/initialize.md)，which can be used to initialize the model parameters dynamically.
+BaseModel inherits from [BaseModule](../advanced_tutorials/initialize.md), which can be used to initialize the model parameters dynamically.
 ```
 
 [**forward**](mmengine.model.BaseModel.forward): The arguments of `forward` need to match with the data given by [DataLoader](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html). If the DataLoader samples a tuple `data`, `forward` needs to accept the value of unpacked `*data`. If DataLoader returns a dict `data`, `forward` needs to accept the key-value of unpacked `**data`. `forward` also accepts `mode` parameter, which is used to control the running branch:
@@ -66,7 +66,7 @@ def train_step(self, data, optim_wrapper):
     # Parse the loss dict and return the parsed losses for optimization
     # and log_vars for logging
     parsed_losses, log_vars = self.parse_losses()
-    optim_wrapper.update_params(parsed_losses)  # 更新参数
+    optim_wrapper.update_params(parsed_losses)
     return log_vars
 ```
 

@@ -9,7 +9,7 @@ import textwrap
 import warnings
 from collections import abc
 from importlib import import_module
-from inspect import getfullargspec
+from inspect import getfullargspec, ismodule
 from itertools import repeat
 from typing import Any, Callable, Optional, Type, Union
 
@@ -46,7 +46,7 @@ def import_modules_from_strings(imports, allow_failed_imports=False):
     Args:
         imports (list | str | None): The given module names to be imported.
         allow_failed_imports (bool): If True, the failed imports will return
-            None. Otherwise, an ImportError is raise. Default: False.
+            None. Otherwise, an ImportError is raise. Defaults to False.
 
     Returns:
         list[module] | module | None: The imported modules.
@@ -131,7 +131,7 @@ def tuple_cast(inputs, dst_type):
 
 def is_seq_of(seq: Any,
               expected_type: Union[Type, tuple],
-              seq_type: Type = None) -> bool:
+              seq_type: Optional[Type] = None) -> bool:
     """Check whether it is a sequence of some type.
 
     Args:
@@ -215,6 +215,47 @@ def concat_list(in_list):
         list: The concatenated flat list.
     """
     return list(itertools.chain(*in_list))
+
+
+def apply_to(data: Any, expr: Callable, apply_func: Callable):
+    """Apply function to each element in dict, list or tuple that matches with
+    the expression.
+
+    For examples, if you want to convert each element in a list of dict from
+    `np.ndarray` to `Tensor`. You can use the following code:
+
+    Examples:
+        >>> from mmengine.utils import apply_to
+        >>> import numpy as np
+        >>> import torch
+        >>> data = dict(array=[np.array(1)]) # {'array': [array(1)]}
+        >>> result = apply_to(data, lambda x: isinstance(x, np.ndarray), lambda x: torch.from_numpy(x))
+        >>> print(result) # {'array': [tensor(1)]}
+
+    Args:
+        data (Any): Data to be applied.
+        expr (Callable): Expression to tell which data should be applied with
+            the function. It should return a boolean.
+        apply_func (Callable): Function applied to data.
+
+    Returns:
+        Any: The data after applying.
+    """  # noqa: E501
+    if isinstance(data, dict):
+        # Keep the original dict type
+        res = type(data)()
+        for key, value in data.items():
+            res[key] = apply_to(value, expr, apply_func)
+        return res
+    elif isinstance(data, tuple) and hasattr(data, '_fields'):
+        # namedtuple
+        return type(data)(*(apply_to(sample, expr, apply_func) for sample in data))  # type: ignore  # noqa: E501  # yapf:disable
+    elif isinstance(data, (tuple, list)):
+        return type(data)(apply_to(sample, expr, apply_func) for sample in data)  # type: ignore  # noqa: E501  # yapf:disable
+    elif expr(data):
+        return apply_func(data)
+    else:
+        return data
 
 
 def check_prerequisites(
@@ -459,3 +500,44 @@ def deprecated_function(since: str, removed_in: str,
         return wrapper
 
     return decorator
+
+
+def get_object_from_string(obj_name: str):
+    """Get object from name.
+
+    Args:
+        obj_name (str): The name of the object.
+
+    Examples:
+        >>> get_object_from_string('torch.optim.sgd.SGD')
+        >>> torch.optim.sgd.SGD
+    """
+    parts = iter(obj_name.split('.'))
+    module_name = next(parts)
+    # import module
+    while True:
+        try:
+            module = import_module(module_name)
+            part = next(parts)
+            # mmcv.ops has nms.py and nms function at the same time. So the
+            # function will have a higher priority
+            obj = getattr(module, part, None)
+            if obj is not None and not ismodule(obj):
+                break
+            module_name = f'{module_name}.{part}'
+        except StopIteration:
+            # if obj is a module
+            return module
+        except ImportError:
+            return None
+
+    # get class or attribute from module
+    obj = module
+    while True:
+        try:
+            obj = getattr(obj, part)
+            part = next(parts)
+        except StopIteration:
+            return obj
+        except AttributeError:
+            return None

@@ -1,16 +1,16 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 """This file holding some environment constant for sharing by other files."""
+import os
 import os.path as osp
 import subprocess
 import sys
 from collections import OrderedDict, defaultdict
-from distutils import errors
 
-import cv2
 import numpy as np
 import torch
 
 import mmengine
+from mmengine.device import is_cuda_available, is_musa_available
 from .parrots_wrapper import TORCH_VERSION, get_build_config, is_rocm_pytorch
 
 
@@ -24,6 +24,10 @@ def _get_cuda_home():
         else:
             from torch.utils.cpp_extension import CUDA_HOME
     return CUDA_HOME
+
+
+def _get_musa_home():
+    return os.environ.get('MUSA_HOME')
 
 
 def collect_env():
@@ -47,13 +51,16 @@ def collect_env():
             - OpenCV (optional): OpenCV version.
             - MMENGINE: MMENGINE version.
     """
+    from distutils import errors
+
     env_info = OrderedDict()
     env_info['sys.platform'] = sys.platform
     env_info['Python'] = sys.version.replace('\n', '')
 
-    cuda_available = torch.cuda.is_available()
+    cuda_available = is_cuda_available()
+    musa_available = is_musa_available()
     env_info['CUDA available'] = cuda_available
-
+    env_info['MUSA available'] = musa_available
     env_info['numpy_random_seed'] = np.random.get_state()[1][0]
 
     if cuda_available:
@@ -89,11 +96,28 @@ def collect_env():
                 except subprocess.SubprocessError:
                     nvcc = 'Not Available'
             env_info['NVCC'] = nvcc
+    elif musa_available:
+        devices = defaultdict(list)
+        for k in range(torch.musa.device_count()):
+            devices[torch.musa.get_device_name(k)].append(str(k))
+        for name, device_ids in devices.items():
+            env_info['GPU ' + ','.join(device_ids)] = name
 
+        MUSA_HOME = _get_musa_home()
+        env_info['MUSA_HOME'] = MUSA_HOME
+
+        if MUSA_HOME is not None and osp.isdir(MUSA_HOME):
+            try:
+                mcc = osp.join(MUSA_HOME, 'bin/mcc')
+                subprocess.check_output(f'"{mcc}" -v', shell=True)
+            except subprocess.SubprocessError:
+                mcc = 'Not Available'
+            env_info['mcc'] = mcc
     try:
         # Check C++ Compiler.
         # For Unix-like, sysconfig has 'CC' variable like 'gcc -pthread ...',
         # indicating the compiler used, we use this to get the compiler name
+        import io
         import sysconfig
         cc = sysconfig.get_config_var('CC')
         if cc:
@@ -118,6 +142,12 @@ def collect_env():
             env_info['GCC'] = 'n/a'
     except (subprocess.CalledProcessError, errors.DistutilsPlatformError):
         env_info['GCC'] = 'n/a'
+    except io.UnsupportedOperation as e:
+        # JupyterLab on Windows changes sys.stdout, which has no `fileno` attr
+        # Refer to: https://github.com/open-mmlab/mmengine/issues/931
+        # TODO: find a solution to get compiler info in Windows JupyterLab,
+        # while preserving backward-compatibility in other systems.
+        env_info['MSVC'] = f'n/a, reason: {str(e)}'
 
     env_info['PyTorch'] = torch.__version__
     env_info['PyTorch compiling details'] = get_build_config()
@@ -128,7 +158,12 @@ def collect_env():
     except ModuleNotFoundError:
         pass
 
-    env_info['OpenCV'] = cv2.__version__
+    try:
+        import cv2
+        env_info['OpenCV'] = cv2.__version__
+    except ImportError:
+        pass
+
     env_info['MMEngine'] = mmengine.__version__
 
     return env_info

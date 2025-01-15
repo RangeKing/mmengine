@@ -1,14 +1,48 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import inspect
 import logging
 import os
+import os.path as osp
 import sys
-from logging import Logger, LogRecord
-from typing import Optional, Union
+import warnings
+from getpass import getuser
+from logging import Logger, LogRecord, handlers
+from socket import gethostname
+from typing import Dict, Optional, Union
 
 from termcolor import colored
 
 from mmengine.utils import ManagerMixin
 from mmengine.utils.manager import _accquire_lock, _release_lock
+
+
+class FilterDuplicateWarning(logging.Filter):
+    """Filter the repeated warning message.
+
+    Args:
+        name (str): name of the filter.
+    """
+
+    def __init__(self, name: str = 'mmengine'):
+        super().__init__(name)
+        self.seen: set = set()
+
+    def filter(self, record: LogRecord) -> bool:
+        """Filter the repeated warning message.
+
+        Args:
+            record (LogRecord): The log record.
+
+        Returns:
+            bool: Whether to output the log record.
+        """
+        if record.levelno != logging.WARNING:
+            return True
+
+        if record.msg not in self.seen:
+            self.seen.add(record.msg)
+            return True
+        return False
 
 
 class MMFormatter(logging.Formatter):
@@ -134,25 +168,45 @@ class MMLogger(Logger, ManagerMixin):
             If `logger_name` is not defined, defaults to 'mmengine'.
         log_file (str, optional): The log filename. If specified, a
             ``FileHandler`` will be added to the logger. Defaults to None.
-        log_level (str): The log level of the handler and logger. Defaults to
-            "NOTSET".
+        log_level (str): The log level of the handler. Defaults to
+            'INFO'. If log level is 'DEBUG', distributed logs will be saved
+            during distributed training.
         file_mode (str): The file mode used to open log file. Defaults to 'w'.
         distributed (bool): Whether to save distributed logs, Defaults to
             false.
+        file_handler_cfg (dict, optional): Configuration of file handler.
+            Defaults to None. If ``file_handler_cfg`` is not specified,
+            ``logging.FileHandler`` will be used by default. If it is
+            specified, the ``type`` key should be set. It can be
+            ``RotatingFileHandler``, ``TimedRotatingFileHandler``,
+            ``WatchedFileHandler`` or other file handlers, and the remaining
+            fields will be used to build the handler.
+
+            Examples:
+                >>> file_handler_cfg = dict(
+                >>>    type='TimedRotatingFileHandler',
+                >>>    when='MIDNIGHT',
+                >>>    interval=1,
+                >>>    backupCount=365)
+
+            `New in version 0.9.0.`
     """
 
     def __init__(self,
                  name: str,
                  logger_name='mmengine',
                  log_file: Optional[str] = None,
-                 log_level: str = 'INFO',
+                 log_level: Union[int, str] = 'INFO',
                  file_mode: str = 'w',
-                 distributed=False):
+                 distributed=False,
+                 file_handler_cfg: Optional[dict] = None):
         Logger.__init__(self, logger_name)
         ManagerMixin.__init__(self, name)
         # Get rank in DDP mode.
-
-        rank = _get_rank()
+        if isinstance(log_level, str):
+            log_level = logging._nameToLevel[log_level]
+        global_rank = _get_rank()
+        device_id = _get_device_id()
 
         # Config stream_handler. If `rank != 0`. stream_handler can only
         # export ERROR logs.
@@ -162,36 +216,63 @@ class MMLogger(Logger, ManagerMixin):
         stream_handler.setFormatter(
             MMFormatter(color=True, datefmt='%m/%d %H:%M:%S'))
         # Only rank0 `StreamHandler` will log messages below error level.
-        stream_handler.setLevel(log_level) if rank == 0 else \
+        if global_rank == 0:
+            stream_handler.setLevel(log_level)
+        else:
             stream_handler.setLevel(logging.ERROR)
+        stream_handler.addFilter(FilterDuplicateWarning(logger_name))
         self.handlers.append(stream_handler)
 
         if log_file is not None:
-            if rank != 0:
-                # rename `log_file` with rank suffix.
-                path_split = log_file.split(os.sep)
-                if '.' in path_split[-1]:
-                    filename_list = path_split[-1].split('.')
-                    filename_list[-2] = f'{filename_list[-2]}_rank{rank}'
-                    path_split[-1] = '.'.join(filename_list)
+            world_size = _get_world_size()
+            is_distributed = (log_level <= logging.DEBUG
+                              or distributed) and world_size > 1
+            if is_distributed:
+                filename, suffix = osp.splitext(osp.basename(log_file))
+                hostname = _get_host_info()
+                if hostname:
+                    filename = (f'{filename}_{hostname}_device{device_id}_'
+                                f'rank{global_rank}{suffix}')
                 else:
-                    path_split[-1] = f'{path_split[-1]}_rank{rank}'
-                log_file = os.sep.join(path_split)
+                    # Omit hostname if it is empty
+                    filename = (f'{filename}_device{device_id}_'
+                                f'rank{global_rank}{suffix}')
+                log_file = osp.join(osp.dirname(log_file), filename)
             # Save multi-ranks logs if distributed is True. The logs of rank0
             # will always be saved.
-            if rank == 0 or distributed:
-                # Here, the default behaviour of the official logger is 'a'.
-                # Thus, we provide an interface to change the file mode to
-                # the default behaviour. `FileHandler` is not supported to
-                # have colors, otherwise it will appear garbled.
-                file_handler = logging.FileHandler(log_file, file_mode)
+            if global_rank == 0 or is_distributed:
+                if file_handler_cfg is not None:
+                    assert 'type' in file_handler_cfg
+                    file_handler_type = file_handler_cfg.pop('type')
+                    file_handlers_map = _get_logging_file_handlers()
+                    if file_handler_type in file_handlers_map:
+                        file_handler_cls = file_handlers_map[file_handler_type]
+                        file_handler_cfg.setdefault('filename', log_file)
+                        file_handler = file_handler_cls(**file_handler_cfg)
+                    else:
+                        raise ValueError('`logging.handlers` does not '
+                                         f'contain {file_handler_type}')
+                else:
+                    # Here, the default behavior of the official
+                    # logger is 'a'. Thus, we provide an interface to
+                    # change the file mode to the default behavior.
+                    # `FileHandler` is not supported to have colors,
+                    # otherwise it will appear garbled.
+                    file_handler = logging.FileHandler(log_file, file_mode)
+
                 # `StreamHandler` record year, month, day hour, minute,
                 # and second timestamp. file_handler will only record logs
                 # without color to avoid garbled code saved in files.
                 file_handler.setFormatter(
                     MMFormatter(color=False, datefmt='%Y/%m/%d %H:%M:%S'))
                 file_handler.setLevel(log_level)
+                file_handler.addFilter(FilterDuplicateWarning(logger_name))
                 self.handlers.append(file_handler)
+        self._log_file = log_file
+
+    @property
+    def log_file(self):
+        return self._log_file
 
     @classmethod
     def get_current_instance(cls) -> 'MMLogger':
@@ -235,15 +316,12 @@ class MMLogger(Logger, ManagerMixin):
 
         level must be an int or a str.
         """
-        # Compatible with python3.6. `logging.Logger` does not have
-        # `_cache` attribute in python3.6.
         self.level = logging._checkLevel(level)
-        if hasattr(self, '_cache'):
-            _accquire_lock()
-            # The same logic as `logging.Manager._clear_cache`.
-            for logger in MMLogger._instance_dict.values():
-                logger._cache.clear()
-            _release_lock()
+        _accquire_lock()
+        # The same logic as `logging.Manager._clear_cache`.
+        for logger in MMLogger._instance_dict.values():
+            logger._cache.clear()
+        _release_lock()
 
 
 def print_log(msg,
@@ -291,6 +369,17 @@ def print_log(msg,
             f'"silent", "current" or None, but got {type(logger)}')
 
 
+def _get_world_size():
+    """Support using logging module without torch."""
+    try:
+        # requires torch
+        from mmengine.dist import get_world_size
+    except ImportError:
+        return 1
+    else:
+        return get_world_size()
+
+
 def _get_rank():
     """Support using logging module without torch."""
     try:
@@ -300,3 +389,74 @@ def _get_rank():
         return 0
     else:
         return get_rank()
+
+
+def _get_device_id():
+    """Get device id of current machine."""
+    try:
+        import torch
+    except ImportError:
+        return 0
+    else:
+        MUSA_AVAILABLE = False
+        try:
+            import torch_musa
+            MUSA_AVAILABLE = True
+        except ImportError:
+            pass
+        if MUSA_AVAILABLE:
+            local_rank = int(os.getenv('LOCAL_RANK', '0'))
+            musa_visible_devices = os.getenv('MUSA_VISIBLE_DEVICES', None)
+            if musa_visible_devices is None:
+                num_device = torch_musa.device_count()
+                musa_visible_devices = list(range(num_device))
+            else:
+                musa_visible_devices = musa_visible_devices.split(',')
+            return int(musa_visible_devices[local_rank])
+        else:
+            local_rank = int(os.getenv('LOCAL_RANK', '0'))
+            # TODO: return device id of npu and mlu.
+            if not torch.cuda.is_available():
+                return local_rank
+            cuda_visible_devices = os.getenv('CUDA_VISIBLE_DEVICES', None)
+            if cuda_visible_devices is None:
+                num_device = torch.cuda.device_count()
+                cuda_visible_devices = list(range(num_device))
+            else:
+                cuda_visible_devices = cuda_visible_devices.split(',')
+            try:
+                return int(cuda_visible_devices[local_rank])
+            except ValueError:
+                # handle case for Multi-Instance GPUs
+                # see #1148 for details
+                return cuda_visible_devices[local_rank]
+
+
+def _get_host_info() -> str:
+    """Get hostname and username.
+
+    Return empty string if exception raised, e.g. ``getpass.getuser()`` will
+    lead to error in docker container
+    """
+    host = ''
+    try:
+        host = f'{getuser()}@{gethostname()}'
+    except Exception as e:
+        warnings.warn(f'Host or user not found: {str(e)}')
+    return host
+
+
+def _get_logging_file_handlers() -> Dict:
+    """Get additional file_handlers in ``logging.handlers``.
+
+    Returns:
+        Dict: A map of file_handlers.
+    """
+    file_handlers_map = {}
+    for module_name in dir(handlers):
+        if module_name.startswith('__'):
+            continue
+        _fh = getattr(handlers, module_name)
+        if inspect.isclass(_fh) and issubclass(_fh, logging.FileHandler):
+            file_handlers_map[module_name] = _fh
+    return file_handlers_map

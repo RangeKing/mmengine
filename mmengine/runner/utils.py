@@ -5,7 +5,9 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 
+from mmengine.device import is_cuda_available, is_musa_available
 from mmengine.dist import get_rank, sync_random_seed
 from mmengine.logging import print_log
 from mmengine.utils import digit_version, is_list_of
@@ -27,7 +29,7 @@ def calc_dynamic_intervals(
 
     Returns:
         Tuple[List[int], List[int]]: a list of milestone and its corresponding
-            intervals.
+        intervals.
     """
     if dynamic_interval_list is None:
         return [0], [start_interval]
@@ -53,9 +55,9 @@ def set_random_seed(seed: Optional[int] = None,
         deterministic (bool): Whether to set the deterministic option for
             CUDNN backend, i.e., set `torch.backends.cudnn.deterministic`
             to True and `torch.backends.cudnn.benchmark` to False.
-            Default: False.
+            Defaults to False.
         diff_rank_seed (bool): Whether to add rank number to the random seed to
-            have different random seed in different threads. Default: False.
+            have different random seed in different threads. Defaults to False.
     """
     if seed is None:
         seed = sync_random_seed()
@@ -68,7 +70,10 @@ def set_random_seed(seed: Optional[int] = None,
     np.random.seed(seed)
     torch.manual_seed(seed)
     # torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if is_cuda_available():
+        torch.cuda.manual_seed_all(seed)
+    elif is_musa_available():
+        torch.musa.manual_seed_all(seed)
     # os.environ['PYTHONHASHSEED'] = str(seed)
     if deterministic:
         if torch.backends.cudnn.benchmark:
@@ -84,3 +89,20 @@ def set_random_seed(seed: Optional[int] = None,
         if digit_version(TORCH_VERSION) >= digit_version('1.10.0'):
             torch.use_deterministic_algorithms(True)
     return seed
+
+
+def _get_batch_size(dataloader: dict):
+    if isinstance(dataloader, dict):
+        if 'batch_size' in dataloader:
+            return dataloader['batch_size']
+        elif ('batch_sampler' in dataloader
+              and 'batch_size' in dataloader['batch_sampler']):
+            return dataloader['batch_sampler']['batch_size']
+        else:
+            raise ValueError('Please set batch_size in `Dataloader` or '
+                             '`batch_sampler`')
+    elif isinstance(dataloader, DataLoader):
+        return dataloader.batch_sampler.batch_size
+    else:
+        raise ValueError('dataloader should be a dict or a Dataloader '
+                         f'instance, but got {type(dataloader)}')

@@ -1,8 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import os
+import platform
 import shutil
 import sys
-from unittest.mock import MagicMock
+import warnings
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -11,8 +13,11 @@ import torch
 from mmengine import Config
 from mmengine.fileio import load
 from mmengine.registry import VISBACKENDS
-from mmengine.visualization import (LocalVisBackend, TensorboardVisBackend,
-                                    WandbVisBackend)
+from mmengine.utils import digit_version, is_installed
+from mmengine.visualization import (AimVisBackend, ClearMLVisBackend,
+                                    DVCLiveVisBackend, LocalVisBackend,
+                                    MLflowVisBackend, NeptuneVisBackend,
+                                    TensorboardVisBackend, WandbVisBackend)
 
 
 class TestLocalVisBackend:
@@ -145,7 +150,7 @@ class TestTensorboardVisBackend:
         tensorboard_vis_backend.add_scalar('map', 0.9, step=0)
         tensorboard_vis_backend.add_scalar('map', 0.95, step=1)
         # test with numpy
-        with pytest.warns(None) as record:
+        with warnings.catch_warnings(record=True) as record:
             tensorboard_vis_backend.add_scalar('map', np.array(0.9), step=0)
             tensorboard_vis_backend.add_scalar('map', np.array(0.95), step=1)
             tensorboard_vis_backend.add_scalar('map', np.array(9), step=0)
@@ -241,3 +246,253 @@ class TestWandbVisBackend:
         wandb_vis_backend._init_env()
         wandb_vis_backend.close()
         shutil.rmtree('temp_dir')
+
+    def test_define_metric_cfg(self):
+        # list of dict
+        define_metric_cfg = [
+            dict(name='test1', step_metric='iter'),
+            dict(name='test2', step_metric='epoch'),
+        ]
+        wandb_vis_backend = WandbVisBackend(
+            'temp_dir', define_metric_cfg=define_metric_cfg)
+        wandb_vis_backend._init_env()
+        wandb_vis_backend._wandb.define_metric.assert_any_call(
+            name='test1', step_metric='iter')
+        wandb_vis_backend._wandb.define_metric.assert_any_call(
+            name='test2', step_metric='epoch')
+
+        # dict
+        define_metric_cfg = dict(test3='max')
+        wandb_vis_backend = WandbVisBackend(
+            'temp_dir', define_metric_cfg=define_metric_cfg)
+        wandb_vis_backend._init_env()
+        wandb_vis_backend._wandb.define_metric.assert_any_call(
+            'test3', summary='max')
+
+        shutil.rmtree('temp_dir')
+
+
+class TestMLflowVisBackend:
+
+    def test_init(self):
+        MLflowVisBackend('temp_dir')
+        VISBACKENDS.build(dict(type='MLflowVisBackend', save_dir='temp_dir'))
+
+    def test_experiment(self):
+        mlflow_vis_backend = MLflowVisBackend('temp_dir')
+        assert mlflow_vis_backend.experiment == mlflow_vis_backend._mlflow
+
+    def test_create_experiment(self):
+        with patch('mlflow.create_experiment') as mock_create_experiment:
+            MLflowVisBackend(
+                'temp_dir', exp_name='test',
+                artifact_location='foo')._init_env()
+            mock_create_experiment.assert_any_call(
+                'test', artifact_location='foo')
+
+    def test_add_config(self):
+        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
+        mlflow_vis_backend = MLflowVisBackend('temp_dir')
+        mlflow_vis_backend.add_config(cfg)
+
+    def test_add_image(self):
+        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
+        mlflow_vis_backend = MLflowVisBackend('temp_dir')
+        mlflow_vis_backend.add_image('img.png', image)
+
+    def test_add_scalar(self):
+        mlflow_vis_backend = MLflowVisBackend('temp_dir')
+        mlflow_vis_backend.add_scalar('map', 0.9)
+        # test append mode
+        mlflow_vis_backend.add_scalar('map', 0.9)
+        mlflow_vis_backend.add_scalar('map', 0.95)
+
+    def test_add_scalars(self):
+        mlflow_vis_backend = MLflowVisBackend('temp_dir')
+        input_dict = {'map': 0.7, 'acc': 0.9}
+        mlflow_vis_backend.add_scalars(input_dict)
+        # test append mode
+        mlflow_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8})
+
+    def test_close(self):
+        cfg = Config(dict(work_dir='temp_dir'))
+        mlflow_vis_backend = MLflowVisBackend('temp_dir')
+        mlflow_vis_backend._init_env()
+        mlflow_vis_backend.add_config(cfg)
+        mlflow_vis_backend.close()
+        shutil.rmtree('temp_dir')
+
+
+@patch.dict(sys.modules, {'clearml': MagicMock()})
+class TestClearMLVisBackend:
+
+    def test_init(self):
+        ClearMLVisBackend('temp_dir')
+        VISBACKENDS.build(dict(type='ClearMLVisBackend', save_dir='temp_dir'))
+
+    def test_experiment(self):
+        clearml_vis_backend = ClearMLVisBackend('temp_dir')
+        assert clearml_vis_backend.experiment == clearml_vis_backend._clearml
+
+    def test_add_config(self):
+        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
+        clearml_vis_backend = ClearMLVisBackend('temp_dir')
+        clearml_vis_backend.add_config(cfg)
+
+    def test_add_image(self):
+        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
+        clearml_vis_backend = ClearMLVisBackend('temp_dir')
+        clearml_vis_backend.add_image('img.png', image)
+
+    def test_add_scalar(self):
+        clearml_vis_backend = ClearMLVisBackend('temp_dir')
+        clearml_vis_backend.add_scalar('map', 0.9)
+        # test append mode
+        clearml_vis_backend.add_scalar('map', 0.9)
+        clearml_vis_backend.add_scalar('map', 0.95)
+
+    def test_add_scalars(self):
+        clearml_vis_backend = ClearMLVisBackend('temp_dir')
+        input_dict = {'map': 0.7, 'acc': 0.9}
+        clearml_vis_backend.add_scalars(input_dict)
+        # test append mode
+        clearml_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8})
+
+    def test_close(self):
+        cfg = Config(dict(work_dir='temp_dir'))
+        clearml_vis_backend = ClearMLVisBackend('temp_dir')
+        clearml_vis_backend._init_env()
+        clearml_vis_backend.add_config(cfg)
+        clearml_vis_backend.close()
+
+
+@pytest.mark.skipif(
+    not is_installed('neptune'), reason='Neptune is not installed.')
+class TestNeptuneVisBackend:
+
+    def test_init(self):
+        NeptuneVisBackend()
+        VISBACKENDS.build(dict(type='NeptuneVisBackend'))
+
+    def test_experiment(self):
+        neptune_vis_backend = NeptuneVisBackend()
+        assert neptune_vis_backend.experiment == neptune_vis_backend._neptune
+
+    def test_add_config(self):
+        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
+        neptune_vis_backend = NeptuneVisBackend()
+        neptune_vis_backend.add_config(cfg)
+
+    def test_add_image(self):
+        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
+        neptune_vis_backend = NeptuneVisBackend()
+        neptune_vis_backend.add_image('img', image)
+        neptune_vis_backend.add_image('img', image, step=1)
+
+    def test_add_scalar(self):
+        neptune_vis_backend = NeptuneVisBackend()
+        neptune_vis_backend.add_scalar('map', 0.9)
+        neptune_vis_backend.add_scalar('map', 0.9, step=1)
+        neptune_vis_backend.add_scalar('map', 0.95, step=2)
+
+    def test_add_scalars(self):
+        neptune_vis_backend = NeptuneVisBackend()
+        input_dict = {'map': 0.7, 'acc': 0.9}
+        neptune_vis_backend.add_scalars(input_dict)
+
+    def test_close(self):
+        neptune_vis_backend = NeptuneVisBackend()
+        neptune_vis_backend._init_env()
+        neptune_vis_backend.close()
+
+
+@pytest.mark.skipif(
+    digit_version(platform.python_version()) < digit_version('3.8'),
+    reason='DVCLiveVisBackend does not support python version < 3.8')
+class TestDVCLiveVisBackend:
+
+    def test_init(self):
+        DVCLiveVisBackend('temp_dir')
+        VISBACKENDS.build(dict(type='DVCLiveVisBackend', save_dir='temp_dir'))
+
+    def test_experiment(self):
+        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
+        assert dvclive_vis_backend.experiment == dvclive_vis_backend._dvclive
+        shutil.rmtree('temp_dir')
+
+    def test_add_config(self):
+        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
+        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
+        dvclive_vis_backend.add_config(cfg)
+        shutil.rmtree('temp_dir')
+
+    def test_add_image(self):
+        img = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
+        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
+        dvclive_vis_backend.add_image('img', img)
+        shutil.rmtree('temp_dir')
+
+    def test_add_scalar(self):
+        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
+        dvclive_vis_backend.add_scalar('mAP', 0.9)
+        # test append mode
+        dvclive_vis_backend.add_scalar('mAP', 0.9)
+        dvclive_vis_backend.add_scalar('mAP', 0.95)
+        shutil.rmtree('temp_dir')
+
+    def test_add_scalars(self):
+        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
+        input_dict = {'map': 0.7, 'acc': 0.9}
+        dvclive_vis_backend.add_scalars(input_dict)
+        # test append mode
+        dvclive_vis_backend.add_scalars({'map': 0.8, 'acc': 0.8})
+        shutil.rmtree('temp_dir')
+
+    def test_close(self):
+        cfg = Config(dict(work_dir='temp_dir'))
+        dvclive_vis_backend = DVCLiveVisBackend('temp_dir')
+        dvclive_vis_backend._init_env()
+        dvclive_vis_backend.add_config(cfg)
+        dvclive_vis_backend.close()
+        shutil.rmtree('temp_dir')
+
+
+@pytest.mark.skipif(
+    platform.system() == 'Windows',
+    reason='Aim does not support Windows for now.')
+class TestAimVisBackend:
+
+    def test_init(self):
+        AimVisBackend()
+        VISBACKENDS.build(dict(type='AimVisBackend'))
+
+    def test_experiment(self):
+        aim_vis_backend = AimVisBackend()
+        assert aim_vis_backend.experiment == aim_vis_backend._aim_run
+
+    def test_add_config(self):
+        cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
+        aim_vis_backend = AimVisBackend()
+        aim_vis_backend.add_config(cfg)
+
+    def test_add_image(self):
+        image = np.random.randint(0, 256, size=(10, 10, 3)).astype(np.uint8)
+        aim_vis_backend = AimVisBackend()
+        aim_vis_backend.add_image('img', image)
+        aim_vis_backend.add_image('img', image, step=1)
+
+    def test_add_scalar(self):
+        aim_vis_backend = AimVisBackend()
+        aim_vis_backend.add_scalar('map', 0.9)
+        aim_vis_backend.add_scalar('map', 0.9, step=1)
+        aim_vis_backend.add_scalar('map', 0.95, step=2)
+
+    def test_add_scalars(self):
+        aim_vis_backend = AimVisBackend()
+        input_dict = {'map': 0.7, 'acc': 0.9}
+        aim_vis_backend.add_scalars(input_dict)
+
+    def test_close(self):
+        aim_vis_backend = AimVisBackend()
+        aim_vis_backend._init_env()
+        aim_vis_backend.close()

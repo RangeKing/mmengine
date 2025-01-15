@@ -34,14 +34,18 @@ class TestMessageHub:
 
     def test_update_scalar(self):
         message_hub = MessageHub.get_instance('mmengine')
-        # test create target `HistoryBuffer` by name
+        # Update scalar with int.
         message_hub.update_scalar('name', 1)
         log_buffer = message_hub.log_scalars['name']
         assert (log_buffer._log_history == np.array([1])).all()
-        # test update target `HistoryBuffer` by name
-        message_hub.update_scalar('name', 1)
+
+        # Update scalar with np.ndarray.
+        message_hub.update_scalar('name', np.array(1))
         assert (log_buffer._log_history == np.array([1, 1])).all()
-        # unmatched string will raise a key error
+
+        # Update scalar with np.int
+        message_hub.update_scalar('name', np.int32(1))
+        assert (log_buffer._log_history == np.array([1, 1, 1])).all()
 
     def test_update_info(self):
         message_hub = MessageHub.get_instance('mmengine')
@@ -50,6 +54,14 @@ class TestMessageHub:
         assert message_hub.runtime_info['key'] == 2
         message_hub.update_info('key', 1)
         assert message_hub.runtime_info['key'] == 1
+
+    def test_pop_info(self):
+        message_hub = MessageHub.get_instance('mmengine')
+        message_hub.update_info('pop_key', 'pop_info')
+        assert message_hub.runtime_info['pop_key'] == 'pop_info'
+        assert message_hub.pop_info('pop_key') == 'pop_info'
+
+        assert message_hub.pop_info('not_existed_key', 'info') == 'info'
 
     def test_update_infos(self):
         message_hub = MessageHub.get_instance('mmengine')
@@ -78,8 +90,7 @@ class TestMessageHub:
 
     def test_get_runtime(self):
         message_hub = MessageHub.get_instance('mmengine')
-        with pytest.raises(KeyError):
-            message_hub.get_info('unknown')
+        assert message_hub.get_info('unknown') is None
         recorded_dict = dict(a=1, b=2)
         message_hub.update_info('test_value', recorded_dict)
         assert message_hub.get_info('test_value') == recorded_dict
@@ -182,10 +193,8 @@ class TestMessageHub:
         obj = pickle.dumps(message_hub)
         instance = pickle.loads(obj)
 
-        with pytest.raises(KeyError):
-            instance.get_info('feat')
-        with pytest.raises(KeyError):
-            instance.get_info('lr')
+        assert instance.get_info('feat') is None
+        assert instance.get_info('lr') is None
 
         instance.get_info('iter')
         instance.get_scalar('loss')

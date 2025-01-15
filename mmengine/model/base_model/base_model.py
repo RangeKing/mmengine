@@ -184,6 +184,24 @@ class BaseModel(BaseModule):
         Returns:
             nn.Module: The model itself.
         """
+
+        # Since Torch has not officially merged
+        # the npu-related fields, using the _parse_to function
+        # directly will cause the NPU to not be found.
+        # Here, the input parameters are processed to avoid errors.
+        if args and isinstance(args[0], str) and 'npu' in args[0]:
+            import torch_npu
+            args = tuple([
+                list(args)[0].replace(
+                    'npu', torch_npu.npu.native_device if hasattr(
+                        torch_npu.npu, 'native_device') else 'privateuseone')
+            ])
+        if kwargs and 'npu' in str(kwargs.get('device', '')):
+            import torch_npu
+            kwargs['device'] = kwargs['device'].replace(
+                'npu', torch_npu.npu.native_device if hasattr(
+                    torch_npu.npu, 'native_device') else 'privateuseone')
+
         device = torch._C._nn._parse_to(*args, **kwargs)[0]
         if device is not None:
             self._set_device(torch.device(device))
@@ -203,6 +221,35 @@ class BaseModel(BaseModule):
             device = torch.device('cuda', index=device)
         self._set_device(torch.device(device))
         return super().cuda(device)
+
+    def musa(
+        self,
+        device: Optional[Union[int, str, torch.device]] = None,
+    ) -> nn.Module:
+        """Overrides this method to call :meth:`BaseDataPreprocessor.musa`
+        additionally.
+
+        Returns:
+            nn.Module: The model itself.
+        """
+        if device is None or isinstance(device, int):
+            device = torch.device('musa', index=device)
+        self._set_device(torch.device(device))
+        return super().musa(device)
+
+    def mlu(
+        self,
+        device: Union[int, str, torch.device, None] = None,
+    ) -> nn.Module:
+        """Overrides this method to call :meth:`BaseDataPreprocessor.mlu`
+        additionally.
+
+        Returns:
+            nn.Module: The model itself.
+        """
+        device = torch.device('mlu', torch.mlu.current_device())
+        self._set_device(device)
+        return super().mlu()
 
     def npu(
         self,
@@ -266,7 +313,7 @@ class BaseModel(BaseModule):
 
         During non-distributed training, validation, and testing process,
         ``forward`` will be called by ``BaseModel.train_step``,
-        ``BaseModel.val_step`` and ``BaseModel.val_step`` directly.
+        ``BaseModel.val_step`` and ``BaseModel.test_step`` directly.
 
         During distributed data parallel training process,
         ``MMSeparateDistributedDataParallel.train_step`` will first call
@@ -285,7 +332,7 @@ class BaseModel(BaseModule):
                 - ``loss``: Called by ``train_step`` and return loss ``dict``
                   used for logging
                 - ``predict``: Called by ``val_step`` and ``test_step``
-                  and return list of `results used for computing metric.
+                  and return list of results used for computing metric.
                 - ``tensor``: Called by custom use to get ``Tensor`` type
                   results.
 
@@ -296,7 +343,7 @@ class BaseModel(BaseModule):
                 - If ``mode == predict``, return a ``list`` of inference
                   results.
                 - If ``mode == tensor``, return a tensor or ``tuple`` of tensor
-                  or ``dict of tensor for custom use.
+                  or ``dict`` of tensor for custom use.
         """
 
     def _run_forward(self, data: Union[dict, tuple, list],

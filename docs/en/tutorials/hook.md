@@ -31,11 +31,12 @@ Each hook has a corresponding priority. At each mount point, hooks with higher p
 
 **custom hooks**
 
-|                Name                 |                                 Function                                 |  Priority   |
-| :---------------------------------: | :----------------------------------------------------------------------: | :---------: |
-|         [EMAHook](#emahook)         |   apply Exponential Moving Average (EMA) on the model during training    | NORMAL (50) |
-|  [EmptyCacheHook](#emptycachehook)  | Releases all unoccupied cached GPU memory during the process of training | NORMAL (50) |
-| [SyncBuffersHook](#syncbuffershook) |            Synchronize model buffers at the end of each epoch            | NORMAL (50) |
+|                Name                 |                                 Function                                 |   Priority    |
+| :---------------------------------: | :----------------------------------------------------------------------: | :-----------: |
+|         [EMAHook](#emahook)         |   Apply Exponential Moving Average (EMA) on the model during training    |  NORMAL (50)  |
+|  [EmptyCacheHook](#emptycachehook)  | Releases all unoccupied cached GPU memory during the process of training |  NORMAL (50)  |
+| [SyncBuffersHook](#syncbuffershook) |            Synchronize model buffers at the end of each epoch            |  NORMAL (50)  |
+|    [ProfilerHook](#profilerhook)    |    Analyze the execution time and GPU memory usage of model operators    | VERY_LOW (90) |
 
 ```{note}
 It is not recommended to modify the priority of the default hooks, as hooks with lower priority may depend on hooks with higher priority. For example, `CheckpointHook` needs to have a lower priority than ParamSchedulerHook so that the saved optimizer state is correct. Also, the priority of custom hooks defaults to `NORMAL (50)`.
@@ -58,6 +59,10 @@ runner = Runner(default_hooks=default_hooks, custom_hooks=custom_hooks, ...)
 runner.train()
 ```
 
+### LoggerHook
+
+[LoggerHook](mmengine.hooks.LoggerHook) collects logs from different components of `Runner` and write them to terminal, JSON file, tensorboard and wandb, etc.
+
 ### CheckpointHook
 
 [CheckpointHook](mmengine.hooks.CheckpointHook) saves the checkpoints at a given interval. In the case of distributed training, only the master process will save the checkpoints. The main features of `CheckpointHook` is as follows.
@@ -66,10 +71,12 @@ runner.train()
 - Save the most recent checkpoints
 - Save the best checkpoints
 - Specify the path to save the checkpoints
+- Make checkpoints for publish
+- Control the epoch number or iteration number at which checkpoint saving begins
 
 For more features, please read the [CheckpointHook API documentation](mmengine.hooks.CheckpointHook).
 
-The four features mentioned above are described below.
+The six features mentioned above are described below.
 
 - Save checkpoints by interval, and support saving them by epoch or iteration
 
@@ -114,6 +121,22 @@ The four features mentioned above are described below.
 
   ```python
   default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=5, out_dir='/path/of/directory'))
+  ```
+
+- Make checkpoints for publish
+
+  If you want to automatically generate publishable checkpoints after training (remove unnecessary keys, such as optimizer state), you can set the `published_keys` parameter to choose which information to keep. Note: You need to set the `save_best` or `save_last` parameters accordingly so that the releasable checkpoints will be generated. Setting `save_best` will generate the releasable weights of the optimal checkpoint, and setting `save_last` will generate the releasable final checkpoint. These two parameters can also be set at the same time.
+
+  ```python
+  default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1, save_best='accuracy', rule='less', published_keys=['meta', 'state_dict']))
+  ```
+
+- Control the epoch number or iteration number at which checkpoint saving begins
+
+  If you want to set the number of epochs or iterations to control the start of saving weights, you can set the `save_begin` parameter, defaults to 0, which means saving checkpoints from the beginning of training. For example, if you train for a total of 10 epochs, and `save_begin` is set to 5, then the checkpoints for epochs 5, 6, 7, 8, 9, and 10 will be saved. If `interval=2`, only save checkpoints for epochs 5, 7 and 9.
+
+  ```python
+  default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=2, save_begin=5))
   ```
 
 [LoggerHook](mmengine.hooks.LoggerHook) collects logs from different components of `Runner` and write them to terminal, JSON file, tensorboard and wandb .etc.
@@ -189,6 +212,20 @@ runner = Runner(custom_hooks=custom_hooks, ...)
 runner.train()
 ```
 
+### ProfilerHook
+
+The [ProfilerHook](mmengine.hooks.ProfilerHook) is used to analyze the execution time and GPU memory occupancy of model operators.
+
+```python
+custom_hooks = [dict(type='ProfilerHook', on_trace_ready=dict(type='tb_trace'))]
+runner = Runner(custom_hooks=custom_hooks, ...)
+runner.train()
+```
+
+The profiling results will be saved in the tf_tracing_logs directory under `work_dirs/{timestamp}`, and can be visualized using TensorBoard with the command `tensorboard --logdir work_dirs/{timestamp}/tf_tracing_logs`.
+
+For more information on the usage of the ProfilerHook, please refer to the [ProfilerHook](mmengine.hooks.ProfilerHook) documentation.
+
 ## Customize Your Hooks
 
 If the built-in hooks provided by MMEngine do not cover your demands, you are encouraged to customize your own hooks by simply inheriting the base [hook](mmengine.hooks.Hook) class and overriding the corresponding mount point methods.
@@ -228,9 +265,9 @@ We simply pass the hook config to the `custom_hooks` parameter of the Runner, wh
 
 ```python
 from mmengine.runner import Runner
-custom_hooks = dict(
+custom_hooks = [
     dict(type='CheckInvalidLossHook', interval=50)
-)
+]
 runner = Runner(custom_hooks=custom_hooks, ...)
 runner.train()  # start training
 ```
@@ -240,9 +277,9 @@ Then the loss value are checked after iteration.
 Note that the priority of the custom hook is `NORMAL (50)` by default, if you want to change the priority of the hook, then you can set the priority key in the config.
 
 ```python
-custom_hooks = dict(
+custom_hooks = [
     dict(type='CheckInvalidLossHook', interval=50, priority='ABOVE_NORMAL')
-)
+]
 ```
 
 You can also set priority when defining classes.

@@ -31,5 +31,10 @@ visualization Backend
 
    BaseVisBackend
    LocalVisBackend
+   MLflowVisBackend
    TensorboardVisBackend
    WandbVisBackend
+   ClearMLVisBackend
+   NeptuneVisBackend
+   DVCLiveVisBackend
+   AimVisBackend

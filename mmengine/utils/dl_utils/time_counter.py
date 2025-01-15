@@ -4,6 +4,7 @@ from typing import Optional, Union
 
 import torch
 
+from mmengine.device import is_cuda_available, is_musa_available
 from mmengine.dist.utils import master_only
 from mmengine.logging import MMLogger, print_log
 
@@ -66,7 +67,7 @@ class TimeCounter:
 
         instance.log_interval = log_interval
         instance.warmup_interval = warmup_interval
-        instance.with_sync = with_sync
+        instance.with_sync = with_sync  # type: ignore
         instance.tag = tag
         instance.logger = logger
 
@@ -84,15 +85,20 @@ class TimeCounter:
         def wrapper(*args, **kwargs):
             self.__count += 1
 
-            if self.with_sync and torch.cuda.is_available():
-                torch.cuda.synchronize()
+            if self.with_sync:
+                if is_cuda_available():
+                    torch.cuda.synchronize()
+                elif is_musa_available():
+                    torch.musa.synchronize()
             start_time = time.perf_counter()
 
             result = fn(*args, **kwargs)
 
-            if self.with_sync and torch.cuda.is_available():
-                torch.cuda.synchronize()
-
+            if self.with_sync:
+                if is_cuda_available():
+                    torch.cuda.synchronize()
+                elif is_musa_available():
+                    torch.musa.synchronize()
             elapsed = time.perf_counter() - start_time
             self.print_time(elapsed)
 
@@ -121,7 +127,7 @@ class TimeCounter:
         self.print_time(elapsed)
 
     def print_time(self, elapsed: Union[int, float]) -> None:
-        """print times per count."""
+        """Print times per count."""
         if self.__count >= self.warmup_interval:
             self.__pure_inf_time += elapsed
 
