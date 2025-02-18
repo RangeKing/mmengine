@@ -3,11 +3,11 @@
 projects.
 
 More datails can be found at
-https://mmengine.readthedocs.io/en/latest/tutorials/registry.html.
+https://mmengine.readthedocs.io/en/latest/advanced_tutorials/registry.html.
 """
 
-from .build_functions import (build_model_from_cfg, build_runner_from_cfg,
-                              build_scheduler_from_cfg)
+from .build_functions import (build_model_from_cfg, build_optimizer_from_cfg,
+                              build_runner_from_cfg, build_scheduler_from_cfg)
 from .registry import Registry
 
 # manage all kinds of runners like `EpochBasedRunner` and `IterBasedRunner`
@@ -18,6 +18,9 @@ RUNNER_CONSTRUCTORS = Registry('runner constructor')
 LOOPS = Registry('loop')
 # manage all kinds of hooks like `CheckpointHook`
 HOOKS = Registry('hook')
+
+# manage all kinds of strategies like `NativeStrategy` and `DDPStrategy`
+STRATEGIES = Registry('strategy')
 
 # manage data-related modules
 DATASETS = Registry('dataset')
@@ -32,7 +35,7 @@ MODEL_WRAPPERS = Registry('model_wrapper')
 WEIGHT_INITIALIZERS = Registry('weight initializer')
 
 # mangage all kinds of optimizers like `SGD` and `Adam`
-OPTIMIZERS = Registry('optimizer')
+OPTIMIZERS = Registry('optimizer', build_func=build_optimizer_from_cfg)
 # manage optimizer wrapper
 OPTIM_WRAPPERS = Registry('optim_wrapper')
 # manage constructors that customize the optimization hyperparameters.
@@ -56,3 +59,9 @@ VISBACKENDS = Registry('vis_backend')
 
 # manage logprocessor
 LOG_PROCESSORS = Registry('log_processor')
+
+# manage inferencer
+INFERENCERS = Registry('inferencer')
+
+# manage function
+FUNCTIONS = Registry('function')

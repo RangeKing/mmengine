@@ -14,12 +14,12 @@ from typing import Callable, List, Optional, Sequence, Union
 from torch.optim import Optimizer
 
 from mmengine.logging import print_log
-from mmengine.optim import OptimWrapper
+from mmengine.optim import BaseOptimWrapper
 from mmengine.registry import PARAM_SCHEDULERS
 
 INF = int(1e9)
 
-OptimizerType = Union[OptimWrapper, Optimizer]
+OptimizerType = Union[BaseOptimWrapper, Optimizer]
 
 
 class _ParamScheduler:
@@ -32,7 +32,7 @@ class _ParamScheduler:
     https://github.com/pytorch/pytorch/blob/master/torch/optim/lr_scheduler.py.
 
     Args:
-        optimizer (OptimWrapper or Optimizer): Wrapped optimizer.
+        optimizer (BaseOptimWrapper or Optimizer): Wrapped optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
         begin (int): Step at which to start updating the parameters.
@@ -58,7 +58,7 @@ class _ParamScheduler:
                  verbose: bool = False):
 
         # Attach optimizer
-        if not isinstance(optimizer, (Optimizer, OptimWrapper)):
+        if not isinstance(optimizer, (Optimizer, BaseOptimWrapper)):
             raise TypeError('``optimizer`` should be an Optimizer,'
                             'but got {}'.format(type(optimizer).__name__))
         self.optimizer = optimizer
@@ -185,10 +185,10 @@ class _ParamScheduler:
         if self._global_step == 0:
             if not hasattr(self.optimizer.step, '_with_counter'):
                 warnings.warn(
-                    'Seems like `optimizer.step()` has been overridden after'
-                    'parameter value scheduler initialization. Please, make'
-                    'sure to call `optimizer.step()` before'
-                    '`scheduler.step()`. See more details at'
+                    'Seems like `optimizer.step()` has been overridden after '
+                    'parameter value scheduler initialization. Please, make '
+                    'sure to call `optimizer.step()` before '
+                    '`scheduler.step()`. See more details at '
                     'https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate',  # noqa: E501
                     UserWarning)
 
@@ -196,8 +196,8 @@ class _ParamScheduler:
             # before optimizer.step()
             elif self.optimizer._global_step < 0:
                 warnings.warn(
-                    'Detected call of `scheduler.step()` before'
-                    '`optimizer.step()`. In PyTorch 1.1.0 and later, you'
+                    'Detected call of `scheduler.step()` before '
+                    '`optimizer.step()`. In PyTorch 1.1.0 and later, you '
                     'should call them in the opposite order: '
                     '`optimizer.step()` before `scheduler.step()`. '
                     'Failure to do this will result in PyTorch skipping '
@@ -228,7 +228,7 @@ class StepParamScheduler(_ParamScheduler):
     other changes to the parameter value from outside this scheduler.
 
     Args:
-        optimizer (OptimWrapper or Optimizer): Wrapped optimizer.
+        optimizer (BaseOptimWrapper or Optimizer): Wrapped optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
         step_size (int): Period of parameter value decay.
@@ -316,7 +316,7 @@ class MultiStepParamScheduler(_ParamScheduler):
     scheduler.
 
     Args:
-        optimizer (OptimWrapper or Optimizer): Wrapped optimizer.
+        optimizer (BaseOptimWrapper or Optimizer): Wrapped optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
         milestones (list): List of epoch indices. Must be increasing.
@@ -405,7 +405,7 @@ class ConstantParamScheduler(_ParamScheduler):
     parameter value from outside this scheduler.
 
     Args:
-        optimizer (Optimizer or OptimWrapper): optimizer or Wrapped
+        optimizer (Optimizer or BaseOptimWrapper): optimizer or Wrapped
             optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
@@ -494,7 +494,7 @@ class ExponentialParamScheduler(_ParamScheduler):
     """Decays the parameter value of each parameter group by gamma every epoch.
 
     Args:
-        optimizer (Optimizer or OptimWrapper): optimizer or Wrapped
+        optimizer (Optimizer or BaseOptimWrapper): optimizer or Wrapped
             optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
@@ -565,9 +565,9 @@ class ExponentialParamScheduler(_ParamScheduler):
 
 @PARAM_SCHEDULERS.register_module()
 class CosineAnnealingParamScheduler(_ParamScheduler):
-    r"""Set the parameter value of each parameter group using a cosine
-    annealing schedule, where :math:`\eta_{max}` is set to the initial value
-    and :math:`T_{cur}` is the number of epochs since the last restart in SGDR:
+    r"""Set the parameter value of each parameter group using a cosine annealing
+    schedule, where :math:`\eta_{max}` is set to the initial value and
+    :math:`T_{cur}` is the number of epochs since the last restart in SGDR:
 
     .. math::
         \begin{aligned}
@@ -593,7 +593,7 @@ class CosineAnnealingParamScheduler(_ParamScheduler):
     only implements the cosine annealing part of SGDR, and not the restarts.
 
     Args:
-        optimizer (Optimizer or OptimWrapper): optimizer or Wrapped
+        optimizer (Optimizer or BaseOptimWrapper): optimizer or Wrapped
             optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
@@ -617,10 +617,10 @@ class CosineAnnealingParamScheduler(_ParamScheduler):
 
     .. _SGDR\: Stochastic Gradient Descent with Warm Restarts:
         https://arxiv.org/abs/1608.03983
-    """
+    """  # noqa: E501
 
     def __init__(self,
-                 optimizer: Union[Optimizer, OptimWrapper],
+                 optimizer: Union[Optimizer, BaseOptimWrapper],
                  param_name: str,
                  T_max: Optional[int] = None,
                  eta_min: Optional[float] = None,
@@ -714,7 +714,7 @@ class LinearParamScheduler(_ParamScheduler):
     parameter value from outside this scheduler.
 
     Args:
-        optimizer (Optimizer or OptimWrapper): optimizer or Wrapped
+        optimizer (Optimizer or BaseOptimWrapper): optimizer or Wrapped
             optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
@@ -736,7 +736,7 @@ class LinearParamScheduler(_ParamScheduler):
     """
 
     def __init__(self,
-                 optimizer: Union[Optimizer, OptimWrapper],
+                 optimizer: Union[Optimizer, BaseOptimWrapper],
                  param_name: str,
                  start_factor: float = 1.0 / 3,
                  end_factor: float = 1.0,
@@ -812,7 +812,7 @@ class PolyParamScheduler(_ParamScheduler):
     parameter value from outside this scheduler.
 
     Args:
-        optimizer (Optimizer or OptimWrapper): optimizer or Wrapped
+        optimizer (Optimizer or BaseOptimWrapper): optimizer or Wrapped
             optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
@@ -832,7 +832,7 @@ class PolyParamScheduler(_ParamScheduler):
     """
 
     def __init__(self,
-                 optimizer: Union[Optimizer, OptimWrapper],
+                 optimizer: Union[Optimizer, BaseOptimWrapper],
                  param_name: str,
                  eta_min: float = 0,
                  power: float = 1.0,
@@ -890,13 +890,13 @@ class PolyParamScheduler(_ParamScheduler):
 
 @PARAM_SCHEDULERS.register_module()
 class OneCycleParamScheduler(_ParamScheduler):
-    r"""Sets the parameters of each parameter group according to the
-    1cycle learning rate policy. The 1cycle policy anneals the learning
-    rate from an initial learning rate to some maximum learning rate and then
-    from that maximum learning rate to some minimum learning rate much lower
-    than the initial learning rate.
-    This policy was initially described in the paper `Super-Convergence:
-    Very Fast Training of Neural Networks Using Large Learning Rates`_.
+    r"""Sets the parameters of each parameter group according to the 1cycle
+    learning rate policy. The 1cycle policy anneals the learning rate from an
+    initial learning rate to some maximum learning rate and then from that
+    maximum learning rate to some minimum learning rate much lower than the
+    initial learning rate. This policy was initially described in the paper
+    `Super-Convergence: Very Fast Training of Neural Networks Using Large
+    Learning Rates`_.
 
     The 1cycle learning rate policy changes the learning rate after every
     batch. `step` should be called after a batch has been used for training.
@@ -924,20 +924,20 @@ class OneCycleParamScheduler(_ParamScheduler):
             for each parameter group.
         total_steps (int): The total number of steps in the cycle. Note that
             if a value is not provided here, then it will be equal to
-            ``end - begin``. Default to None
+            ``end - begin``. Defaults to None
         pct_start (float): The percentage of the cycle (in number of steps)
             spent increasing the learning rate.
-            Default to 0.3
+            Defaults to 0.3
         anneal_strategy (str): {'cos', 'linear'}
             Specifies the annealing strategy: "cos" for cosine annealing,
             "linear" for linear annealing.
-            Default to 'cos'
+            Defaults to 'cos'
         div_factor (float): Determines the initial learning rate via
             initial_param = eta_max/div_factor
-            Default to 25
+            Defaults to 25
         final_div_factor (float): Determines the minimum learning rate via
             eta_min = initial_param/final_div_factor
-            Default to 1e4
+            Defaults to 1e4
         three_phase (bool): If ``True``, use a third phase of the schedule to
             annihilate the learning rate according to 'final_div_factor'
             instead of modifying the second phase (the first two phases will be
@@ -951,10 +951,10 @@ class OneCycleParamScheduler(_ParamScheduler):
 
     .. _Super-Convergence\: Very Fast Training of Neural Networks Using Large Learning Rates:
         https://arxiv.org/abs/1708.07120
-    """# noqa E501
+    """  # noqa E501
 
     def __init__(self,
-                 optimizer: Union[Optimizer, OptimWrapper],
+                 optimizer: Union[Optimizer, BaseOptimWrapper],
                  param_name: str,
                  eta_max: float = 0,
                  total_steps: Optional[int] = None,
@@ -984,7 +984,7 @@ class OneCycleParamScheduler(_ParamScheduler):
                                  f'but got {total_steps}')
             self.total_steps = total_steps
         else:
-            self.total_steps = self.end - self.begin
+            self.total_steps = end - begin
 
         # Validate pct_start
         if pct_start < 0 or pct_start > 1 or not isinstance(pct_start, float):
@@ -1058,7 +1058,7 @@ class OneCycleParamScheduler(_ParamScheduler):
             if len(param) != len(optimizer.param_groups):
                 raise ValueError(
                     f'expected {len(optimizer.param_groups)} values '
-                    f'for {name}, got { len(param)}')
+                    f'for {name}, got {len(param)}')
             return param
         else:
             return [param] * len(optimizer.param_groups)
@@ -1143,7 +1143,7 @@ class CosineRestartParamScheduler(_ParamScheduler):
     with `restart_weight`.
 
     Args:
-        optimizer (Optimizer or OptimWrapper): optimizer or Wrapped
+        optimizer (Optimizer or BaseOptimWrapper): optimizer or Wrapped
             optimizer.
         param_name (str): Name of the parameter to be adjusted, such as
             ``lr``, ``momentum``.
@@ -1168,7 +1168,7 @@ class CosineRestartParamScheduler(_ParamScheduler):
     """
 
     def __init__(self,
-                 optimizer: Union[Optimizer, OptimWrapper],
+                 optimizer: Union[Optimizer, BaseOptimWrapper],
                  param_name: str,
                  periods: List[int],
                  restart_weights: Sequence[float] = (1, ),
@@ -1283,3 +1283,296 @@ class CosineRestartParamScheduler(_ParamScheduler):
             if iteration < period:
                 return i
         return None
+
+
+@PARAM_SCHEDULERS.register_module()
+class ReduceOnPlateauParamScheduler(_ParamScheduler):
+    """Reduce the parameters of each parameter group when a metric has stopped
+    improving. Models often benefit from reducing the parameters by a factor of
+    2-10 once learning stagnates. This scheduler reads a metrics quantity and
+    if no improvement is seen for a ``patience`` number of epochs, the
+    parameters are reduced.
+
+    The implementation is motivated by `PyTorch ReduceLROnPlateau`_.
+
+    Args:
+        optimizer (Optimizer or BaseOptimWrapper): optimizer or Wrapped
+            optimizer.
+        param_name (str): Name of the parameter to be adjusted, such as
+            ``lr``, ``momentum``.
+        monitor (str): The name of the metric to measure whether
+            the performance of the model is improved.
+        rule (str): One of `less`, `greater`. In `less` rule, parameters will
+            be reduced when the quantity monitored has stopped
+            decreasing; in `greater` rule it will be reduced when the
+            quantity monitored has stopped increasing. Defaults to 'less'.
+            The ``rule`` is the renaming of ``mode`` in pytorch.
+        factor (float): Factor by which the parameters will be
+            reduced. new_param = param * factor. Defaults to 0.1.
+        patience (int): Number of epochs with no improvement after
+            which parameters will be reduced. For example, if
+            ``patience = 2``, then we will ignore the first 2 epochs
+            with no improvement, and will only decrease the parameters after
+            the 3rd epoch if the monitor value still hasn't improved then.
+            Defaults to 10.
+        threshold (float): Threshold for measuring the new optimum,
+            to only focus on significant changes. Defaults to 1e-4.
+        threshold_rule (str): One of `rel`, `abs`. In `rel` rule,
+            dynamic_threshold = best * ( 1 + threshold ) in 'greater'
+            rule or best * ( 1 - threshold ) in `less` rule.
+            In `abs` rule, dynamic_threshold = best + threshold in
+            `greater` rule or best - threshold in `less` rule.
+            Defaults to 'rel'.
+        cooldown (int): Number of epochs to wait before resuming
+            normal operation after parameters have been reduced. Defaults to 0.
+        min_value (float or list[float]): A scalar or a sequence of scalars.
+            A lower bound on the parameters of each parameter group
+            respectively. Defaults to 0. .
+        eps (float): Minimal decay applied to parameters. If the difference
+            between new and old parameters are smaller than eps, the update is
+            ignored. Defaults to 1e-8.
+        begin (int): Step at which to start triggering the scheduler
+            to monitor in val within the interval calculated
+            according to epoch of training. Defaults to 0.
+        end (int): Step at which to stop triggering the scheduler
+            to monitor in val within the interval calculated
+            according to epoch of training. Defaults to INF.
+        last_step (int): The index of last step. Used for resume without
+            state dict. Defaults to -1.
+        by_epoch (bool): Whether the scheduled parameters are updated by
+            epochs. Defaults to True.
+        verbose (bool): Whether to print the value for each update.
+            Defaults to False.
+
+    .. _PyTorch ReduceLROnPlateau:
+       https://github.com/pytorch/pytorch/blob/master/torch/optim/lr_scheduler.py
+    """
+
+    need_val_args = True
+
+    def __init__(self,
+                 optimizer: OptimizerType,
+                 param_name: str,
+                 monitor: str = 'loss',
+                 rule: str = 'less',
+                 factor: float = 0.1,
+                 patience: int = 10,
+                 threshold: float = 1e-4,
+                 threshold_rule: str = 'rel',
+                 cooldown: int = 0,
+                 min_value: Union[float, Sequence[float]] = 0.,
+                 eps: float = 1e-8,
+                 begin: int = 0,
+                 end: int = INF,
+                 last_step: int = -1,
+                 by_epoch: bool = True,
+                 verbose: bool = False):
+
+        # Attach optimizer
+        if not isinstance(optimizer, (Optimizer, BaseOptimWrapper)):
+            raise TypeError('``optimizer`` should be an Optimizer,'
+                            'but got {}'.format(type(optimizer).__name__))
+        self.optimizer = optimizer
+        self.param_name = param_name
+
+        if end <= begin:
+            raise ValueError('end should be larger than begin, but got'
+                             ' begin={}, end={}'.format(begin, end))
+        self.begin = begin
+        self.end = end
+
+        assert by_epoch, \
+            f'Now {type(self).__name__} only support by_epoch=True'
+        self.by_epoch = by_epoch
+
+        assert isinstance(last_step, int) and last_step >= -1
+        # Initialize valid step count and base values
+        if last_step == -1:
+            for group in optimizer.param_groups:
+                # If the param is never be scheduled, record the current value
+                # as the initial value.
+                group.setdefault(f'initial_{param_name}', group[param_name])
+        else:
+            for i, group in enumerate(optimizer.param_groups):
+                if f'initial_{param_name}' not in group:
+                    raise KeyError(
+                        f"param 'initial_{param_name}' is not specified "
+                        'in param_groups[{}] when resuming an optimizer'.
+                        format(i))
+
+        self.last_step = last_step
+
+        self._global_step = 0
+        self.verbose = verbose
+
+        if factor >= 1.0:
+            raise ValueError('Factor should be < 1.0.')
+        self.factor = factor
+
+        # This code snippet handles compatibility with the optimizer wrapper.
+        # The optimizer wrapper includes an additional parameter to record the
+        # base learning rate (lr) which is not affected by the paramwise_cfg.
+        # By retrieving the base lr, we can obtain the actual base lr that
+        # reflects the learning progress.
+        if isinstance(optimizer, BaseOptimWrapper):
+            raw_optimizer = optimizer.optimizer
+        else:
+            raw_optimizer = optimizer
+
+        if isinstance(min_value, (list, tuple)):
+            if len(min_value) != len(raw_optimizer.param_groups):
+                raise ValueError('expected {} min_lrs, got {}'.format(
+                    len(raw_optimizer.param_groups), len(min_value)))
+            self.min_values = list(min_value)
+            # Consider the `min_value` of the last param_groups
+            # as the base setting. And we only add this value when
+            # the optimizer is OptimWrapper.
+            if isinstance(optimizer, BaseOptimWrapper) and \
+                    optimizer.base_param_settings is not None:  # type: ignore
+                self.min_values.append(self.min_values[-1])
+
+        else:
+            self.min_values = [min_value] * len(  # type: ignore
+                optimizer.param_groups)
+
+        self.patience = patience
+        self.cooldown = cooldown
+        self.cooldown_counter = 0
+        self.rule_worse = None  # the worse value for the chosen mode
+        self.best = None
+        self.num_bad_epochs = 0
+        self.eps = eps
+
+        self.monitor = monitor
+        self._init_is_better(
+            rule=rule, threshold=threshold, threshold_rule=threshold_rule)
+        self._reset()
+
+        # remove call self.step() and init self._global_step = 0
+        self._last_value = [
+            group[self.param_name] for group in self.optimizer.param_groups
+        ]
+
+    def step(self, metrics=None):
+        """Adjusts the parameter value of each parameter group based on the
+        specified schedule.
+
+        Args:
+            metrics (Dict[str, float], optional): Evaluation results of all
+                metrics on validation dataset. The keys are the names of the
+                metrics, and the values are corresponding results.
+                Defaults to None.
+        """
+        if metrics is None:
+            # only to count self._global_step
+            self._global_step += 1
+            return
+
+        if not isinstance(metrics, dict):
+            raise TypeError('metrics type should be dict,'
+                            f' but got type {type(metrics)}')
+
+        # Compute parameter value per param group in the effective range
+        if self.begin <= self._global_step < self.end:
+            self.last_step += 1
+
+            # convert `metric` to float, in case it's a zero-dim Tensor
+            metric = metrics.get(self.monitor, None)
+            if metric is not None:
+                if self._is_better(metric, self.best):
+                    self.best = metric
+                    self.num_bad_epochs = 0
+                else:
+                    self.num_bad_epochs += 1
+
+                if self._in_cooldown():
+                    self.cooldown_counter -= 1
+                    self.num_bad_epochs = 0  # ignore bad epochs in cooldown
+
+                if self.num_bad_epochs > self.patience:
+                    values = self._get_value()
+
+                    for i, data in enumerate(
+                            zip(self.optimizer.param_groups, values)):
+                        param_group, value = data
+                        if param_group[self.param_name] - value > self.eps:
+                            param_group[self.param_name] = value
+                            self.print_value(self.verbose, i, value)
+                    self.cooldown_counter = self.cooldown
+                    self.num_bad_epochs = 0
+
+            else:
+                raise KeyError(f'Excepted key in {list(metrics.keys())},'
+                               f' but got key {self.monitor} is not in dict')
+
+        self._last_value = [
+            group[self.param_name] for group in self.optimizer.param_groups
+        ]
+
+    def print_value(self, is_verbose: bool, group: int, value: float) -> None:
+        """Display the current parameter value.
+
+        Args:
+            is_verbose (bool): Whether to print the value.
+            group (int): The index of the current ``param_group``.
+            value (float): The parameter value.
+        """
+        if is_verbose:
+            step_name = 'epoch' if self.by_epoch else 'iter'
+            print_log(
+                f'Adjusting parameter value of group {group} to {value:.4e} '
+                f'in {step_name} {self.last_step}.',
+                logger='current')
+
+    def _get_value(self):
+        """Compute value using chainable form of the scheduler."""
+        values = [
+            float(group[self.param_name]) * self.factor
+            for group in self.optimizer.param_groups
+        ]
+        return [max(v, min_v) for v, min_v in zip(values, self.min_values)]
+
+    def _in_cooldown(self):
+        """Judge whether it is in cooldown."""
+        return self.cooldown_counter > 0
+
+    def _is_better(self, a, best):
+        """Judge whether the monitor value is better."""
+        if self.rule == 'less' and self.threshold_rule == 'rel':
+            rel_epsilon = 1. - self.threshold
+            return a < best * rel_epsilon
+
+        elif self.rule == 'less' and self.threshold_rule == 'abs':
+            return a < best - self.threshold
+
+        elif self.rule == 'greater' and self.threshold_rule == 'rel':
+            rel_epsilon = self.threshold + 1.
+            return a > best * rel_epsilon
+
+        else:  # rule == 'greater' and epsilon_mode == 'abs':
+            return a > best + self.threshold
+
+    def _init_is_better(self, rule, threshold, threshold_rule):
+        """Initialize rule and its associated values."""
+        if threshold < 0:
+            raise ValueError(f'threshold {threshold} should be >= 0.')
+        if rule not in {'less', 'greater'}:
+            raise ValueError(f'mode {rule} is unknown!')
+        if threshold_rule not in {'rel', 'abs'}:
+            raise ValueError(f'threshold mode {threshold_rule}'
+                             ' is unknown!')
+
+        if rule == 'less':
+            self.rule_worse = INF
+        else:  # rule == 'greater':
+            self.rule_worse = -INF
+
+        self.rule = rule
+        self.threshold = threshold
+        self.threshold_rule = threshold_rule
+
+    def _reset(self):
+        """Resets num_bad_epochs counter and cooldown counter."""
+        self.best = self.rule_worse
+        self.cooldown_counter = 0
+        self.num_bad_epochs = 0

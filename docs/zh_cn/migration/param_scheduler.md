@@ -185,7 +185,7 @@ lr_config = dict(
 ```python
 param_scheduler = [
     dict(type='MultiStepLR',
-         milestone=[8, 11],
+         milestones=[8, 11],
          gamma=0.1,
          by_epoch=True)
 ]
@@ -560,4 +560,4 @@ param_scheduler = [
 </thead>
 </table>
 
-你可能还想阅读[参数调度器的教程](../tutorials/param_scheduler.md)或者[参数调度器的 API 文档](mmengine.optim.scheduler)。
+你可能还想阅读[参数调度器的教程](../tutorials/param_scheduler.md)或者[参数调度器的 API 文档](../api/optim)。

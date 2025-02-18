@@ -20,7 +20,7 @@ Pros and cons lie in both approaches. For the former one, beginners may be lost 
 
 We argue that the key to learning runner is using it as a memo. You should remember its most commonly used arguments and only focus on those less used when in need, since default values usually work fine. In the following, we will provide a beginner-friendly example to illustrate the most commonly used arguments of the runner, along with advanced guidelines for those less used.
 
-### A beginer-friendly example
+### A beginner-friendly example
 
 ```{hint}
 In this tutorial, we hope you can focus more on overall architecture instead of implementation details. This "top-down" way of thinking is exactly what we advocate. Don't worry, you will definitely have plenty of opportunities and guidance afterward to focus on modules you want to improve.
@@ -189,7 +189,7 @@ runner = Runner(
     log_level='INFO',
 
     # load model weights from given path. None for no loading.
-    load_from=None
+    load_from=None,
     # resume training from the given path
     resume=False
 )
@@ -228,7 +228,7 @@ class MyAwesomeModel(BaseModel): # your custom model
     def __init__(self, layers=18, activation='silu'):
         ...
 
-# An example of manual construction
+# An example of construction via registry
 runner = Runner(
     model=dict(
         type='MyAwesomeModel',
@@ -237,7 +237,7 @@ runner = Runner(
     ...
 )
 
-# An example of construction via registry
+# An example of manual construction
 model = MyAwesomeModel(layers=18, activation='relu')
 runner = Runner(
     model=model,
@@ -258,7 +258,7 @@ If you as a beginner do not immediately understand, it doesn't matter too much, 
 <details>
 <summary>Where can I find the possible configuration options for the xxx argument?</summary>
 
-You will find extensive instructions and examples in those tutorials of the corresponding modules. You can also find all possible arguments in [Runner's API documentation](mmengine.runner.Runner). If neither of the above resolves your query, you are always encouraged to start a topic in our [discussion forum](https://github.com/open-mmlab/mmengine/discussions). It also helps us improve documentations.
+You will find extensive instructions and examples in those tutorials of the corresponding modules. You can also find all possible arguments in [Runner's API documentation](mmengine.runner.Runner). If neither of the above resolves your query, you are always encouraged to start a topic in our [discussion forum](https://github.com/open-mmlab/mmengine/discussions). It also helps us improve documentation.
 
 </details>
 
@@ -352,10 +352,10 @@ When using config files, you typically don't need to manually register every mod
 ```
 
 ```{note}
-When using config files, the implementations of your custom modules may be stored in separate files and thus not registered properly, which will lead to errors in the build process. You may find solutions in [Registry tutorial](./registry.md) by searching for `custom_imports`.
+When using config files, the implementations of your custom modules may be stored in separate files and thus not registered properly, which will lead to errors in the build process. You may find solutions in [Config tutorial](../advanced_tutorials/config.md#import-the-custom-module).
 ```
 
-```{warnings}
+```{warning}
 Although sharing nearly the same codes, `from_cfg` and `__init__` differs in some default values like `env_cfg`.
 ```
 

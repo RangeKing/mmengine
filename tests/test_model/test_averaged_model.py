@@ -4,6 +4,7 @@ from unittest import TestCase
 
 import torch
 
+from mmengine.logging import MMLogger
 from mmengine.model import (ExponentialMovingAverage, MomentumAnnealingEMA,
                             StochasticWeightAverage)
 from mmengine.testing import assert_allclose
@@ -12,7 +13,8 @@ from mmengine.testing import assert_allclose
 class TestAveragedModel(TestCase):
     """Test the AveragedModel class.
 
-    Some test cases are referenced from https://github.com/pytorch/pytorch/blob/master/test/test_optim.py
+    Some test cases are referenced from
+    https://github.com/pytorch/pytorch/blob/master/test/test_optim.py
     """  # noqa: E501
 
     def _test_swa_model(self, net_device, avg_device):
@@ -94,9 +96,9 @@ class TestAveragedModel(TestCase):
                 torch.nn.Conv2d(1, 5, kernel_size=3), torch.nn.Linear(5, 10))
             ExponentialMovingAverage(model, momentum=3)
 
-        with self.assertWarnsRegex(
-                Warning,
-                'The value of momentum in EMA is usually a small number'):
+        # Warning should be raised if the value of momentum in EMA is
+        # a large number
+        with self.assertLogs(MMLogger.get_current_instance(), level='WARNING'):
             model = torch.nn.Sequential(
                 torch.nn.Conv2d(1, 5, kernel_size=3), torch.nn.Linear(5, 10))
             ExponentialMovingAverage(model, momentum=0.9)

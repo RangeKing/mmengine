@@ -46,16 +46,17 @@ class OptimWrapperDict(OptimWrapper):
                 f'but got {key}: {type(value)}')
         self.optim_wrappers = optim_wrapper_dict
 
-    def update_params(self,
-                      loss: torch.Tensor,
-                      step_kwargs: Optional[Dict] = None,
-                      zero_kwargs: Optional[Dict] = None) -> None:
+    def update_params(  # type: ignore
+            self,
+            loss: torch.Tensor,
+            step_kwargs: Optional[Dict] = None,
+            zero_kwargs: Optional[Dict] = None) -> None:
         """Update all optimizer wrappers would lead to a duplicate backward
         errors, and OptimWrapperDict does not know which optimizer wrapper
         should be updated.
 
         Therefore, this method is not implemented. The optimizer wrapper of
-        OptimWrapperDict should be accessed and call its `update_params.
+        OptimWrapperDict should be accessed and call its `update_params`.
         """
         raise NotImplementedError('`update_params` should be called by each '
                                   'optimizer separately`')
@@ -66,7 +67,7 @@ class OptimWrapperDict(OptimWrapper):
         different :obj:AmpOptimWrapper), this method is not implemented.
 
         The optimizer wrapper of OptimWrapperDict should be accessed and call
-        its `backward.
+        its `backward`.
         """
         raise NotImplementedError('`backward` should be called by each '
                                   'optimizer separately`')
@@ -115,7 +116,10 @@ class OptimWrapperDict(OptimWrapper):
         """
         lr_dict = dict()
         for name, optim_wrapper in self.optim_wrappers.items():
-            lr_dict[f'{name}.lr'] = optim_wrapper.get_lr()['lr']
+            inner_lr_dict = optim_wrapper.get_lr()
+            if 'base_lr' in inner_lr_dict:
+                lr_dict[f'{name}.base_lr'] = inner_lr_dict['base_lr']
+            lr_dict[f'{name}.lr'] = inner_lr_dict['lr']
         return lr_dict
 
     def get_momentum(self) -> Dict[str, List[float]]:
@@ -157,8 +161,7 @@ class OptimWrapperDict(OptimWrapper):
             self.optim_wrappers[name].load_state_dict(_state_dict)
 
     def items(self) -> Iterator[Tuple[str, OptimWrapper]]:
-        """A generator to get the name and corresponding
-        :obj:`OptimWrapper`"""
+        """A generator to get the name and corresponding :obj:`OptimWrapper`"""
         yield from self.optim_wrappers.items()
 
     def values(self) -> Iterator[OptimWrapper]:

@@ -12,12 +12,27 @@
 
 .. toctree::
    :maxdepth: 1
+   :caption: 示例
+
+   examples/train_a_gan.md
+   examples/train_seg.md
+
+.. toctree::
+   :maxdepth: 1
    :caption: 常用功能
 
-   examples/resume_training.md
-   examples/speed_up_training.md
-   examples/save_gpu_memory.md
-   examples/train_a_gan.md
+   common_usage/resume_training.md
+   common_usage/distributed_training.md
+   common_usage/speed_up_training.md
+   common_usage/save_gpu_memory.md
+   common_usage/large_model_training.md
+   common_usage/better_optimizers.md
+   common_usage/visualize_training_log.md
+   common_usage/set_random_seed.md
+   common_usage/debug_tricks.md
+   common_usage/model_analysis.md
+   common_usage/set_interval.md
+   common_usage/epoch_to_iter.md
 
 .. toctree::
    :maxdepth: 3
@@ -48,6 +63,7 @@
    advanced_tutorials/manager_mixin.md
    advanced_tutorials/cross_library.md
    advanced_tutorials/test_time_augmentation.md
+   advanced_tutorials/model_analysis.md
 
 .. toctree::
    :maxdepth: 1
@@ -58,6 +74,7 @@
    design/evaluation.md
    design/visualization.md
    design/logging.md
+   design/infer.md
 
 .. toctree::
    :maxdepth: 1
@@ -73,15 +90,18 @@
    :maxdepth: 2
    :caption: API 文档
 
+   mmengine.analysis <api/analysis>
    mmengine.registry <api/registry>
    mmengine.config <api/config>
    mmengine.runner <api/runner>
+   mmengine._strategy <api/strategy>
    mmengine.hooks <api/hooks>
    mmengine.model <api/model>
    mmengine.optim <api/optim>
    mmengine.evaluator <api/evaluator>
    mmengine.structures <api/structures>
    mmengine.dataset <api/dataset>
+   mmengine.infer <api/infer>
    mmengine.device <api/device>
    mmengine.hub <api/hub>
    mmengine.logging <api/logging>
@@ -98,6 +118,7 @@
    notes/changelog.md
    notes/contributing.md
    notes/code_style.md
+   notes/debug_with_vscode.md
 
 .. toctree::
    :caption: 语言切换

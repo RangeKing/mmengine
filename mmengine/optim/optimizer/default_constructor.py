@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import warnings
+import inspect
+import logging
 from typing import List, Optional, Union
 
 import torch
@@ -51,7 +52,7 @@ class DefaultOptimWrapperConstructor:
       rate for parameters of offset layer in the deformable convs
       of a model.
     - ``bypass_duplicate`` (bool): If true, the duplicate parameters
-      would not be added into optimizer. Default: False.
+      would not be added into optimizer. Defaults to False.
 
     Note:
 
@@ -130,7 +131,7 @@ class DefaultOptimWrapperConstructor:
         self._validate_cfg()
 
     def _validate_cfg(self) -> None:
-        """verify the correctness of the config."""
+        """Verify the correctness of the config."""
         if not isinstance(self.paramwise_cfg, dict):
             raise TypeError('paramwise_cfg should be None or a dict, '
                             f'but got {type(self.paramwise_cfg)}')
@@ -154,7 +155,7 @@ class DefaultOptimWrapperConstructor:
                 raise ValueError('base_wd should not be None')
 
     def _is_in(self, param_group: dict, param_group_list: list) -> bool:
-        """check whether the `param_group` is in the`param_group_list`"""
+        """Check whether the `param_group` is in the`param_group_list`"""
         assert is_list_of(param_group_list, dict)
         param = set(param_group['params'])
         param_set = set()
@@ -204,13 +205,20 @@ class DefaultOptimWrapperConstructor:
 
         for name, param in module.named_parameters(recurse=False):
             param_group = {'params': [param]}
-            if not param.requires_grad:
-                params.append(param_group)
-                continue
             if bypass_duplicate and self._is_in(param_group, params):
-                warnings.warn(f'{prefix} is duplicate. It is skipped since '
-                              f'bypass_duplicate={bypass_duplicate}')
+                print_log(
+                    f'{prefix} is duplicate. It is skipped since '
+                    f'bypass_duplicate={bypass_duplicate}',
+                    logger='current',
+                    level=logging.WARNING)
                 continue
+            if not param.requires_grad:
+                print_log((f'{prefix}.{name} is skipped since its '
+                           f'requires_grad={param.requires_grad}'),
+                          logger='current',
+                          level=logging.WARNING)
+                continue
+
             # if the parameter match one of the custom keys, ignore other rules
             is_custom = False
             for key in sorted_keys:
@@ -289,15 +297,24 @@ class DefaultOptimWrapperConstructor:
         optim_wrapper_cfg = self.optim_wrapper_cfg.copy()
         optim_wrapper_cfg.setdefault('type', 'OptimWrapper')
         optimizer_cfg = self.optimizer_cfg.copy()
+        optimizer_cls = self.optimizer_cfg['type']
+        # Optimizer like HybridAdam in colossalai requires the argument name
+        # `model_params` rather than `params`. Here we get the first argument
+        # name and fill it with the model parameters.
+        if isinstance(optimizer_cls, str):
+            with OPTIMIZERS.switch_scope_and_registry(None) as registry:
+                optimizer_cls = registry.get(self.optimizer_cfg['type'])
+        fisrt_arg_name = next(
+            iter(inspect.signature(optimizer_cls).parameters))
         # if no paramwise option is specified, just use the global setting
         if not self.paramwise_cfg:
-            optimizer_cfg['params'] = model.parameters()
+            optimizer_cfg[fisrt_arg_name] = model.parameters()
             optimizer = OPTIMIZERS.build(optimizer_cfg)
         else:
             # set param-wise lr and weight decay recursively
             params: List = []
             self.add_params(params, model)
-            optimizer_cfg['params'] = params
+            optimizer_cfg[fisrt_arg_name] = params
             optimizer = OPTIMIZERS.build(optimizer_cfg)
         optim_wrapper = OPTIM_WRAPPERS.build(
             optim_wrapper_cfg, default_args=dict(optimizer=optimizer))

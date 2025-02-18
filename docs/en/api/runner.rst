@@ -20,6 +20,7 @@ Runner
    :template: classtemplate.rst
 
    Runner
+   FlexibleRunner
 
 Loop
 ----------------
@@ -85,3 +86,4 @@ Miscellaneous
    :nosignatures:
 
    get_priority
+   set_random_seed

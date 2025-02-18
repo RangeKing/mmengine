@@ -13,7 +13,7 @@ from torch import distributed as torch_dist
 from torch._utils import (_flatten_dense_tensors, _take_tensors,
                           _unflatten_dense_tensors)
 from torch.distributed import ProcessGroup
-
+from itertools import zip_longest, chain
 import mmengine
 from .utils import (get_world_size, get_rank, get_backend, get_dist_info,
                     get_default_group, barrier, get_data_device,
@@ -307,7 +307,8 @@ def broadcast(data: Tensor,
         input_device = get_data_device(data)
         backend_device = get_comm_device(group)
         data_on_device = cast_data_device(data, backend_device)
-
+        # broadcast requires tensor is contiguous
+        data_on_device = data_on_device.contiguous()  # type: ignore
         torch_dist.broadcast(data_on_device, src, group)
 
         if get_rank(group) != src:
@@ -413,8 +414,16 @@ def _broadcast_object_list(object_list: List[Any],
     is_nccl_backend = group_backend == torch_dist.Backend.NCCL
     current_device = torch.device('cpu')
     is_hccl_backend = group_backend == 'hccl'
+    is_cncl_backend = group_backend == 'cncl'
+    is_mccl_backend = group_backend == 'mccl'
     if is_hccl_backend:
-        current_device = torch.npu.current_device()
+        current_device = torch.device('npu', torch.npu.current_device())
+        object_sizes_tensor = object_sizes_tensor.to(current_device)
+    elif is_cncl_backend:
+        current_device = torch.device('mlu', torch.mlu.current_device())
+        object_sizes_tensor = object_sizes_tensor.to(current_device)
+    elif is_mccl_backend:
+        current_device = torch.device('musa', torch.musa.current_device())
         object_sizes_tensor = object_sizes_tensor.to(current_device)
     elif is_nccl_backend:
         # See note about using torch.cuda.current_device() here in
@@ -435,7 +444,7 @@ def _broadcast_object_list(object_list: List[Any],
             dtype=torch.uint8,
         )
 
-    if is_nccl_backend or is_hccl_backend:
+    if is_nccl_backend or is_hccl_backend or is_cncl_backend:
         object_tensor = object_tensor.to(current_device)
     torch_dist.broadcast(object_tensor, src=src, group=group)
     # Deserialize objects using their stored sizes.
@@ -619,11 +628,19 @@ def _all_gather_object(object_list: List[Any],
     group_backend = get_backend(group)
     current_device = torch.device('cpu')
     is_nccl_backend = group_backend == torch_dist.Backend.NCCL
+    is_mccl_backend = group_backend == 'mccl'
     if is_nccl_backend:
         # See note about using torch.cuda.current_device() here in docstring.
         # We cannot simply use my_rank since rank == device is not necessarily
         # true.
         current_device = torch.device('cuda', torch.cuda.current_device())
+        input_tensor = input_tensor.to(current_device)
+        local_size = local_size.to(current_device)
+    elif is_mccl_backend:
+        # See note about using torch.musa.current_device() here in docstring.
+        # We cannot simply use my_rank since rank == device is not necessarily
+        # true.
+        current_device = torch.device('musa', torch.musa.current_device())
         input_tensor = input_tensor.to(current_device)
         local_size = local_size.to(current_device)
     # Gather all local sizes. This is so that we can find the max size, and
@@ -771,8 +788,13 @@ def _gather_object(obj: Any,
     group_backend = get_backend(group)
     current_device = torch.device('cpu')
     is_nccl_backend = group_backend == torch_dist.Backend.NCCL
+    is_mccl_backend = group_backend == 'mccl'
     if is_nccl_backend:
         current_device = torch.device('cuda', torch.cuda.current_device())
+        input_tensor = input_tensor.to(current_device)
+        local_size = local_size.to(current_device)
+    elif is_mccl_backend:
+        current_device = torch.device('musa', torch.musa.current_device())
         input_tensor = input_tensor.to(current_device)
         local_size = local_size.to(current_device)
     # Gather all local sizes. This is so that we can find the max size, and
@@ -893,10 +915,11 @@ def collect_results(results: list,
             object.
         size (int): Size of the results, commonly equal to length of
             the results.
-        device (str): Device name. Optional values are 'cpu' and 'gpu'.
+        device (str): Device name. Optional values are 'cpu', 'gpu' or 'npu'.
         tmpdir (str | None): Temporal directory for collected results to
             store. If set to None, it will create a temporal directory for it.
-            ``tmpdir`` should be None when device is 'gpu'. Defaults to None.
+            ``tmpdir`` should be None when device is 'gpu' or 'npu'.
+            Defaults to None.
 
     Returns:
         list or None: The collected results.
@@ -915,13 +938,13 @@ def collect_results(results: list,
         ['foo', 24, {1: 2}, {'a': 'b'}]  # rank 0
         None  # rank 1
     """
-    if device not in ['gpu', 'cpu']:
+    if device not in ['gpu', 'cpu', 'npu']:
         raise NotImplementedError(
-            f"device must be 'cpu' or 'gpu', but got {device}")
+            f"device must be 'cpu' , 'gpu' or 'npu', but got {device}")
 
-    if device == 'gpu':
-        assert tmpdir is None, 'tmpdir should be None when device is "gpu"'
-        return collect_results_gpu(results, size)
+    if device == 'gpu' or device == 'npu':
+        assert tmpdir is None, f'tmpdir should be None when device is {device}'
+        return _collect_results_device(results, size)
     else:
         return collect_results_cpu(results, size, tmpdir)
 
@@ -995,17 +1018,48 @@ def collect_results_cpu(result_part: list,
         part_list = []
         for i in range(world_size):
             path = osp.join(tmpdir, f'part_{i}.pkl')  # type: ignore
+            if not osp.exists(path):
+                raise FileNotFoundError(
+                    f'{tmpdir} is not an shared directory for '
+                    f'rank {i}, please make sure {tmpdir} is a shared '
+                    'directory for all ranks!')
             with open(path, 'rb') as f:
                 part_list.append(pickle.load(f))
         # sort the results
         ordered_results = []
-        for res in zip(*part_list):
-            ordered_results.extend(list(res))
+        zipped_results = zip_longest(*part_list)
+        ordered_results = [
+            i for i in chain.from_iterable(zipped_results) if i is not None
+        ]
         # the dataloader may pad some samples
         ordered_results = ordered_results[:size]
         # remove tmp dir
         shutil.rmtree(tmpdir)  # type: ignore
         return ordered_results
+
+
+def _collect_results_device(result_part: list, size: int) -> Optional[list]:
+    """Collect results under gpu or npu mode."""
+    rank, world_size = get_dist_info()
+    if world_size == 1:
+        return result_part[:size]
+
+    # gather all result part. Note that NCCL does not support gather so use
+    # all_gather_object instead.
+    part_list = all_gather_object(result_part)
+
+    if rank == 0:
+        # sort the results
+        ordered_results = []
+        zipped_results = zip_longest(*part_list)
+        ordered_results = [
+            i for i in chain.from_iterable(zipped_results) if i is not None
+        ]
+        # the dataloader may pad some samples
+        ordered_results = ordered_results[:size]
+        return ordered_results
+    else:
+        return None
 
 
 def collect_results_gpu(result_part: list, size: int) -> Optional[list]:
@@ -1038,24 +1092,7 @@ def collect_results_gpu(result_part: list, size: int) -> Optional[list]:
         ['foo', 24, {1: 2}, {'a': 'b'}]  # rank 0
         None  # rank 1
     """
-    rank, world_size = get_dist_info()
-    if world_size == 1:
-        return result_part[:size]
-
-    # gather all result part. Note that NCCL does not support gather so use
-    # all_gather_object instead.
-    part_list = all_gather_object(result_part)
-
-    if rank == 0:
-        # sort the results
-        ordered_results = []
-        for res in zip(*part_list):
-            ordered_results.extend(list(res))
-        # the dataloader may pad some samples
-        ordered_results = ordered_results[:size]
-        return ordered_results
-    else:
-        return None
+    return _collect_results_device(result_part, size)
 
 
 def _all_reduce_coalesced(tensors: List[torch.Tensor],

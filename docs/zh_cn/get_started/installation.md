@@ -1,13 +1,13 @@
-## 安装
+# 安装
 
-### 环境依赖
+## 环境依赖
 
-- Python 3.6+
+- Python 3.7+
 - PyTorch 1.6+
 - CUDA 9.2+
 - GCC 5.4+
 
-### 准备环境
+## 准备环境
 
 1. 使用 conda 新建虚拟环境，并进入该虚拟环境；
 
@@ -24,9 +24,18 @@
    python -c 'import torch;print(torch.__version__)'
    ```
 
-### 安装 MMEngine
+## 安装 MMEngine
 
-#### 使用 mim 安装
+:::{note}
+如果你只想使用 MMEngine 中的 fileio、registry 和 config 模块，你可以安装`mmengine-lite`，它只会安装必须的几个第三方库依赖（例如不会安装 opencv、matplotlib）：
+
+```bash
+pip install mmengine-lite
+```
+
+:::
+
+### 使用 mim 安装
 
 [mim](https://github.com/open-mmlab/mim) 是 OpenMMLab 项目的包管理工具，使用它可以很方便地安装 OpenMMLab 项目。
 
@@ -35,13 +44,13 @@ pip install -U openmim
 mim install mmengine
 ```
 
-#### 使用 pip 安装
+### 使用 pip 安装
 
 ```bash
 pip install mmengine
 ```
 
-#### 使用 docker 镜像
+### 使用 docker 镜像
 
 1. 构建镜像
 
@@ -57,7 +66,9 @@ pip install mmengine
    docker run --gpus all --shm-size=8g -it mmengine
    ```
 
-#### 源码安装
+### 源码安装
+
+#### 安装 mmengine
 
 ```bash
 # 如果克隆代码仓库的速度过慢，可以从 https://gitee.com/open-mmlab/mmengine.git 克隆
@@ -66,7 +77,16 @@ cd mmengine
 pip install -e . -v
 ```
 
-### 验证安装
+#### 安装 mmengine-lite
+
+```bash
+# 如果克隆代码仓库的速度过慢，可以从 https://gitee.com/open-mmlab/mmengine.git 克隆
+git clone https://github.com/open-mmlab/mmengine.git
+cd mmengine
+MMENGINE_LITE=1 pip install -e . -v
+```
+
+## 验证安装
 
 为了验证是否正确安装了 MMEngine 和所需的环境，我们可以运行以下命令
 

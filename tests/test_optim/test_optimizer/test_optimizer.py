@@ -10,11 +10,16 @@ import torch.nn as nn
 from torch.distributed.rpc import is_available
 
 from mmengine.dist import get_rank
+from mmengine.logging import MMLogger
 from mmengine.optim import (OPTIM_WRAPPER_CONSTRUCTORS, OPTIMIZERS,
                             DefaultOptimWrapperConstructor, OptimWrapper,
                             build_optim_wrapper)
-from mmengine.optim.optimizer.builder import TORCH_OPTIMIZERS
-from mmengine.registry import build_from_cfg
+from mmengine.optim.optimizer.builder import (BITSANDBYTES_OPTIMIZERS,
+                                              DADAPTATION_OPTIMIZERS,
+                                              LION_OPTIMIZERS,
+                                              TORCH_OPTIMIZERS,
+                                              TRANSFORMERS_OPTIMIZERS)
+from mmengine.registry import DefaultScope, Registry, build_from_cfg
 from mmengine.testing._internal import MultiProcessTestCase
 from mmengine.utils.dl_utils import TORCH_VERSION, mmcv_full_available
 from mmengine.utils.version_utils import digit_version
@@ -23,6 +28,38 @@ MMCV_FULL_AVAILABLE = mmcv_full_available()
 if not MMCV_FULL_AVAILABLE:
     sys.modules['mmcv.ops'] = MagicMock(
         DeformConv2d=dict, ModulatedDeformConv2d=dict)
+
+
+def has_dadaptation() -> bool:
+    try:
+        import dadaptation  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def has_lion() -> bool:
+    try:
+        import lion_pytorch  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def has_bitsandbytes() -> bool:
+    try:
+        import bitsandbytes  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def has_transformers() -> bool:
+    try:
+        import transformers  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 class ExampleModel(nn.Module):
@@ -206,6 +243,32 @@ class TestBuilder(TestCase):
         ]
         assert set(torch_optimizers).issubset(set(TORCH_OPTIMIZERS))
 
+    @unittest.skipIf(not has_dadaptation(), 'dadaptation is not installed')
+    def test_dadaptation_optimizers(self):
+        dadaptation_optimizers = ['DAdaptAdaGrad', 'DAdaptAdam', 'DAdaptSGD']
+        assert set(dadaptation_optimizers).issubset(
+            set(DADAPTATION_OPTIMIZERS))
+
+    @unittest.skipIf(not has_lion(), 'lion-pytorch is not installed')
+    def test_lion_optimizers(self):
+        assert 'Lion' in LION_OPTIMIZERS
+
+    @unittest.skipIf(not has_bitsandbytes(), 'bitsandbytes is not installed')
+    def test_bitsandbytes_optimizers(self):
+        bitsandbytes_optimizers = [
+            'AdamW8bit', 'Adam8bit', 'Adagrad8bit', 'PagedAdam8bit',
+            'PagedAdamW8bit', 'LAMB8bit', 'LARS8bit', 'RMSprop8bit',
+            'Lion8bit', 'PagedLion8bit', 'SGD8bit'
+        ]
+        assert set(bitsandbytes_optimizers).issubset(
+            set(BITSANDBYTES_OPTIMIZERS))
+
+    @unittest.skipIf(not has_transformers(), 'transformers is not installed')
+    def test_transformers_optimizers(self):
+        transformers_optimizers = ['Adafactor']
+        assert set(transformers_optimizers).issubset(
+            set(TRANSFORMERS_OPTIMIZERS))
+
     def test_build_optimizer(self):
         # test build function without ``constructor`` and ``paramwise_cfg``
         optim_wrapper_cfg = dict(
@@ -362,6 +425,22 @@ class TestBuilder(TestCase):
         optim_wrapper = optim_constructor(self.model)
         self._check_default_optimizer(optim_wrapper.optimizer, self.model)
 
+        # Support building custom optimizers
+        CUSTOM_OPTIMIZERS = Registry(
+            'custom optimizer', scope='custom optimizer', parent=OPTIMIZERS)
+
+        class CustomOptimizer(torch.optim.SGD):
+
+            def __init__(self, model_params, *args, **kwargs):
+                super().__init__(params=model_params, *args, **kwargs)
+
+        CUSTOM_OPTIMIZERS.register_module()(CustomOptimizer)
+        optimizer_cfg = dict(optimizer=dict(type='CustomOptimizer', lr=0.1), )
+        with DefaultScope.overwrite_default_scope('custom optimizer'):
+            optim_constructor = DefaultOptimWrapperConstructor(optimizer_cfg)
+            optim_wrapper = optim_constructor(self.model)
+        OPTIMIZERS.children.pop('custom optimizer')
+
     def test_default_optimizer_constructor_with_model_wrapper(self):
         # basic config with pseudo data parallel
         model = PseudoDataParallel()
@@ -470,7 +549,8 @@ class TestBuilder(TestCase):
                 weight_decay=self.base_wd,
                 momentum=self.momentum))
         paramwise_cfg = dict()
-        optim_constructor = DefaultOptimWrapperConstructor(optim_wrapper_cfg)
+        optim_constructor = DefaultOptimWrapperConstructor(
+            optim_wrapper_cfg, paramwise_cfg)
         optim_wrapper = optim_constructor(model)
         self._check_default_optimizer(optim_wrapper.optimizer, model)
 
@@ -512,23 +592,16 @@ class TestBuilder(TestCase):
             dwconv_decay_mult=0.1,
             dcn_offset_lr_mult=0.1)
 
-        for param in self.model.parameters():
-            param.requires_grad = False
+        self.model.conv1.requires_grad_(False)
         optim_constructor = DefaultOptimWrapperConstructor(
             optim_wrapper_cfg, paramwise_cfg)
         optim_wrapper = optim_constructor(self.model)
-        optimizer = optim_wrapper.optimizer
-        param_groups = optimizer.param_groups
-        assert isinstance(optim_wrapper.optimizer, torch.optim.SGD)
-        assert optimizer.defaults['lr'] == self.base_lr
-        assert optimizer.defaults['momentum'] == self.momentum
-        assert optimizer.defaults['weight_decay'] == self.base_wd
-        for i, (name, param) in enumerate(self.model.named_parameters()):
-            param_group = param_groups[i]
-            assert torch.equal(param_group['params'][0], param)
-            assert param_group['momentum'] == self.momentum
-            assert param_group['lr'] == self.base_lr
-            assert param_group['weight_decay'] == self.base_wd
+
+        all_params = []
+        for pg in optim_wrapper.param_groups:
+            all_params.extend(map(id, pg['params']))
+        self.assertNotIn(id(self.model.conv1.weight), all_params)
+        self.assertIn(id(self.model.conv2.weight), all_params)
 
     def test_default_optimizer_constructor_bypass_duplicate(self):
         # paramwise_cfg with bypass_duplicate option
@@ -564,10 +637,9 @@ class TestBuilder(TestCase):
         optim_constructor = DefaultOptimWrapperConstructor(
             optim_wrapper_cfg, paramwise_cfg)
 
-        self.assertWarnsRegex(
-            Warning,
-            'conv3.0 is duplicate. It is skipped since bypass_duplicate=True',
-            lambda: optim_constructor(model))
+        with self.assertLogs(MMLogger.get_current_instance(), level='WARNING'):
+            # Warning should be raised since conv3.0 is a duplicate param.
+            optim_constructor(model)
         optim_wrapper = optim_constructor(model)
         model_parameters = list(model.parameters())
         num_params = 14 if MMCV_FULL_AVAILABLE else 11
@@ -575,6 +647,18 @@ class TestBuilder(TestCase):
             model_parameters) == num_params
         self._check_sgd_optimizer(optim_wrapper.optimizer, model,
                                   **paramwise_cfg)
+
+        # test DefaultOptimWrapperConstructor when the params in shared
+        # modules do not require grad
+        model.conv1[0].requires_grad_(False)
+        with self.assertLogs(MMLogger.get_current_instance(), level='WARNING'):
+            # Warning should be raised since conv3.0 is a duplicate param.
+            optim_constructor(model)
+        optim_wrapper = optim_constructor(model)
+        model_parameters = list(model.parameters())
+        num_params = 14 if MMCV_FULL_AVAILABLE else 11
+        assert len(optim_wrapper.optimizer.param_groups
+                   ) == len(model_parameters) - 1 == num_params - 1
 
     def test_default_optimizer_constructor_custom_key(self):
         # test DefaultOptimWrapperConstructor with custom_keys and
@@ -732,7 +816,7 @@ class TestBuilder(TestCase):
     reason='ZeRO requires pytorch>=1.8 with torch.distributed.rpc available.')
 class TestZeroOptimizer(MultiProcessTestCase):
 
-    def setUp(self) -> None:
+    def setUp(self):
         super().setUp()
         self._spawn_processes()
 

@@ -1,9 +1,12 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from .vis_backend import (BaseVisBackend, LocalVisBackend,
-                          TensorboardVisBackend, WandbVisBackend)
+from .vis_backend import (AimVisBackend, BaseVisBackend, ClearMLVisBackend,
+                          DVCLiveVisBackend, LocalVisBackend, MLflowVisBackend,
+                          NeptuneVisBackend, TensorboardVisBackend,
+                          WandbVisBackend)
 from .visualizer import Visualizer
 
 __all__ = [
     'Visualizer', 'BaseVisBackend', 'LocalVisBackend', 'WandbVisBackend',
-    'TensorboardVisBackend'
+    'TensorboardVisBackend', 'MLflowVisBackend', 'ClearMLVisBackend',
+    'NeptuneVisBackend', 'DVCLiveVisBackend', 'AimVisBackend'
 ]

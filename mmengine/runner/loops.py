@@ -1,14 +1,17 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import bisect
+import logging
 import time
-import warnings
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 from torch.utils.data import DataLoader
 
 from mmengine.evaluator import Evaluator
+from mmengine.logging import HistoryBuffer, print_log
 from mmengine.registry import LOOPS
+from mmengine.structures import BaseDataElement
+from mmengine.utils import is_list_of
 from .amp import autocast
 from .base_loop import BaseLoop
 from .utils import calc_dynamic_intervals
@@ -49,14 +52,19 @@ class EpochBasedTrainLoop(BaseLoop):
         self._iter = 0
         self.val_begin = val_begin
         self.val_interval = val_interval
+        # This attribute will be updated by `EarlyStoppingHook`
+        # when it is enabled.
+        self.stop_training = False
         if hasattr(self.dataloader.dataset, 'metainfo'):
             self.runner.visualizer.dataset_meta = \
                 self.dataloader.dataset.metainfo
         else:
-            warnings.warn(
+            print_log(
                 f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
                 'metainfo. ``dataset_meta`` in visualizer will be '
-                'None.')
+                'None.',
+                logger='current',
+                level=logging.WARNING)
 
         self.dynamic_milestones, self.dynamic_intervals = \
             calc_dynamic_intervals(
@@ -86,13 +94,14 @@ class EpochBasedTrainLoop(BaseLoop):
         """Launch training."""
         self.runner.call_hook('before_train')
 
-        while self._epoch < self._max_epochs:
+        while self._epoch < self._max_epochs and not self.stop_training:
             self.run_epoch()
 
             self._decide_current_val_interval()
             if (self.runner.val_loop is not None
                     and self._epoch >= self.val_begin
-                    and self._epoch % self.val_interval == 0):
+                    and (self._epoch % self.val_interval == 0
+                         or self._epoch == self._max_epochs)):
                 self.runner.val_loop.run()
 
         self.runner.call_hook('after_train')
@@ -157,11 +166,14 @@ class _InfiniteDataloaderIterator:
         try:
             data = next(self._iterator)
         except StopIteration:
-            warnings.warn('Reach the end of the dataloader, it will be '
-                          'restarted and continue to iterate. It is '
-                          'recommended to use '
-                          '`mmengine.dataset.InfiniteSampler` to enable the '
-                          'dataloader to iterate infinitely.')
+            print_log(
+                'Reach the end of the dataloader, it will be '
+                'restarted and continue to iterate. It is '
+                'recommended to use '
+                '`mmengine.dataset.InfiniteSampler` to enable the '
+                'dataloader to iterate infinitely.',
+                logger='current',
+                level=logging.WARNING)
             self._epoch += 1
             if hasattr(self._dataloader, 'sampler') and hasattr(
                     self._dataloader.sampler, 'set_epoch'):
@@ -216,14 +228,19 @@ class IterBasedTrainLoop(BaseLoop):
         self._iter = 0
         self.val_begin = val_begin
         self.val_interval = val_interval
+        # This attribute will be updated by `EarlyStoppingHook`
+        # when it is enabled.
+        self.stop_training = False
         if hasattr(self.dataloader.dataset, 'metainfo'):
             self.runner.visualizer.dataset_meta = \
                 self.dataloader.dataset.metainfo
         else:
-            warnings.warn(
+            print_log(
                 f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
                 'metainfo. ``dataset_meta`` in visualizer will be '
-                'None.')
+                'None.',
+                logger='current',
+                level=logging.WARNING)
         # get the iterator of the dataloader
         self.dataloader_iterator = _InfiniteDataloaderIterator(self.dataloader)
 
@@ -257,7 +274,15 @@ class IterBasedTrainLoop(BaseLoop):
         # In iteration-based training loop, we treat the whole training process
         # as a big epoch and execute the corresponding hook.
         self.runner.call_hook('before_train_epoch')
-        while self._iter < self._max_iters:
+        if self._iter > 0:
+            print_log(
+                f'Advance dataloader {self._iter} steps to skip data '
+                'that has already been trained',
+                logger='current',
+                level=logging.WARNING)
+            for _ in range(self._iter):
+                next(self.dataloader_iterator)
+        while self._iter < self._max_iters and not self.stop_training:
             self.runner.model.train()
 
             data_batch = next(self.dataloader_iterator)
@@ -266,7 +291,8 @@ class IterBasedTrainLoop(BaseLoop):
             self._decide_current_val_interval()
             if (self.runner.val_loop is not None
                     and self._iter >= self.val_begin
-                    and self._iter % self.val_interval == 0):
+                    and (self._iter % self.val_interval == 0
+                         or self._iter == self._max_iters)):
                 self.runner.val_loop.run()
 
         self.runner.call_hook('after_train_epoch')
@@ -320,7 +346,7 @@ class ValLoop(BaseLoop):
                  fp16: bool = False) -> None:
         super().__init__(runner, dataloader)
 
-        if isinstance(evaluator, dict) or isinstance(evaluator, list):
+        if isinstance(evaluator, (dict, list)):
             self.evaluator = runner.build_evaluator(evaluator)  # type: ignore
         else:
             assert isinstance(evaluator, Evaluator), (
@@ -332,22 +358,33 @@ class ValLoop(BaseLoop):
             self.runner.visualizer.dataset_meta = \
                 self.dataloader.dataset.metainfo
         else:
-            warnings.warn(
+            print_log(
                 f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
                 'metainfo. ``dataset_meta`` in evaluator, metric and '
-                'visualizer will be None.')
+                'visualizer will be None.',
+                logger='current',
+                level=logging.WARNING)
         self.fp16 = fp16
+        self.val_loss: Dict[str, HistoryBuffer] = dict()
 
     def run(self) -> dict:
         """Launch validation."""
         self.runner.call_hook('before_val')
         self.runner.call_hook('before_val_epoch')
         self.runner.model.eval()
+
+        # clear val loss
+        self.val_loss.clear()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch)
 
         # compute metrics
         metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+
+        if self.val_loss:
+            loss_dict = _parse_losses(self.val_loss, 'val')
+            metrics.update(loss_dict)
+
         self.runner.call_hook('after_val_epoch', metrics=metrics)
         self.runner.call_hook('after_val')
         return metrics
@@ -365,6 +402,9 @@ class ValLoop(BaseLoop):
         # outputs should be sequence of BaseDataElement
         with autocast(enabled=self.fp16):
             outputs = self.runner.model.val_step(data_batch)
+
+        outputs, self.val_loss = _update_losses(outputs, self.val_loss)
+
         self.evaluator.process(data_samples=outputs, data_batch=data_batch)
         self.runner.call_hook(
             'after_val_iter',
@@ -402,22 +442,33 @@ class TestLoop(BaseLoop):
             self.runner.visualizer.dataset_meta = \
                 self.dataloader.dataset.metainfo
         else:
-            warnings.warn(
+            print_log(
                 f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
                 'metainfo. ``dataset_meta`` in evaluator, metric and '
-                'visualizer will be None.')
+                'visualizer will be None.',
+                logger='current',
+                level=logging.WARNING)
         self.fp16 = fp16
+        self.test_loss: Dict[str, HistoryBuffer] = dict()
 
     def run(self) -> dict:
         """Launch test."""
         self.runner.call_hook('before_test')
         self.runner.call_hook('before_test_epoch')
         self.runner.model.eval()
+
+        # clear test loss
+        self.test_loss.clear()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch)
 
         # compute metrics
         metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+
+        if self.test_loss:
+            loss_dict = _parse_losses(self.test_loss, 'test')
+            metrics.update(loss_dict)
+
         self.runner.call_hook('after_test_epoch', metrics=metrics)
         self.runner.call_hook('after_test')
         return metrics
@@ -434,9 +485,66 @@ class TestLoop(BaseLoop):
         # predictions should be sequence of BaseDataElement
         with autocast(enabled=self.fp16):
             outputs = self.runner.model.test_step(data_batch)
+
+        outputs, self.test_loss = _update_losses(outputs, self.test_loss)
+
         self.evaluator.process(data_samples=outputs, data_batch=data_batch)
         self.runner.call_hook(
             'after_test_iter',
             batch_idx=idx,
             data_batch=data_batch,
             outputs=outputs)
+
+
+def _parse_losses(losses: Dict[str, HistoryBuffer],
+                  stage: str) -> Dict[str, float]:
+    """Parses the raw losses of the network.
+
+    Args:
+        losses (dict): raw losses of the network.
+        stage (str): The stage of loss, e.g., 'val' or 'test'.
+
+    Returns:
+        dict[str, float]: The key is the loss name, and the value is the
+        average loss.
+    """
+    all_loss = 0
+    loss_dict: Dict[str, float] = dict()
+
+    for loss_name, loss_value in losses.items():
+        avg_loss = loss_value.mean()
+        loss_dict[loss_name] = avg_loss
+        if 'loss' in loss_name:
+            all_loss += avg_loss
+
+    loss_dict[f'{stage}_loss'] = all_loss
+    return loss_dict
+
+
+def _update_losses(outputs: list, losses: dict) -> Tuple[list, dict]:
+    """Update and record the losses of the network.
+
+    Args:
+        outputs (list): The outputs of the network.
+        losses (dict): The losses of the network.
+
+    Returns:
+        list: The updated outputs of the network.
+        dict: The updated losses of the network.
+    """
+    if isinstance(outputs[-1],
+                  BaseDataElement) and outputs[-1].keys() == ['loss']:
+        loss = outputs[-1].loss  # type: ignore
+        outputs = outputs[:-1]
+    else:
+        loss = dict()
+
+    for loss_name, loss_value in loss.items():
+        if loss_name not in losses:
+            losses[loss_name] = HistoryBuffer()
+        if isinstance(loss_value, torch.Tensor):
+            losses[loss_name].update(loss_value.item())
+        elif is_list_of(loss_value, torch.Tensor):
+            for loss_value_i in loss_value:
+                losses[loss_name].update(loss_value_i.item())
+    return outputs, losses

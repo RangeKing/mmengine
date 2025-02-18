@@ -119,7 +119,7 @@ def caffe2_xavier_init(module, bias=0):
 
 
 def bias_init_with_prob(prior_prob):
-    """initialize conv/fc bias value according to a given probability value."""
+    """Initialize conv/fc bias value according to a given probability value."""
     bias_init = float(-np.log((1 - prior_prob) / prior_prob))
     return bias_init
 
@@ -198,7 +198,9 @@ class ConstantInit(BaseInit):
 @WEIGHT_INITIALIZERS.register_module(name='Xavier')
 class XavierInit(BaseInit):
     r"""Initialize module parameters with values according to the method
-    described in `Understanding the difficulty of training deep feedforward
+    described in the paper below.
+
+    `Understanding the difficulty of training deep feedforward
     neural networks - Glorot, X. & Bengio, Y. (2010).
     <http://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf>`_
 
@@ -381,7 +383,9 @@ class UniformInit(BaseInit):
 @WEIGHT_INITIALIZERS.register_module(name='Kaiming')
 class KaimingInit(BaseInit):
     r"""Initialize module parameters with the values according to the method
-    described in `Delving deep into rectifiers: Surpassing human-level
+    described in the paper below.
+
+    `Delving deep into rectifiers: Surpassing human-level
     performance on ImageNet classification - He, K. et al. (2015).
     <https://www.cv-foundation.org/openaccess/content_iccv_2015/
     papers/He_Delving_Deep_into_ICCV_2015_paper.pdf>`_
@@ -658,12 +662,12 @@ def trunc_normal_(tensor: Tensor,
                   std: float = 1.,
                   a: float = -2.,
                   b: float = 2.) -> Tensor:
-    r"""Fills the input Tensor with values drawn from a truncated
-    normal distribution. The values are effectively drawn from the
-    normal distribution :math:`\mathcal{N}(\text{mean}, \text{std}^2)`
-    with values outside :math:`[a, b]` redrawn until they are within
-    the bounds. The method used for generating the random values works
-    best when :math:`a \leq \text{mean} \leq b`.
+    r"""Fills the input Tensor with values drawn from a truncated normal
+    distribution. The values are effectively drawn from the normal distribution
+    :math:`\mathcal{N}(\text{mean}, \text{std}^2)` with values outside
+    :math:`[a, b]` redrawn until they are within the bounds. The method used
+    for generating the random values works best when :math:`a \leq \text{mean}
+    \leq b`.
 
     Modified from
     https://github.com/pytorch/pytorch/blob/master/torch/nn/init.py

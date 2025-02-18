@@ -2,6 +2,7 @@
 import copy
 import logging
 import os
+import shutil
 import tempfile
 import time
 from unittest import TestCase
@@ -31,18 +32,18 @@ class ToyModel(BaseModel):
         self.linear1 = nn.Linear(2, 2)
         self.linear2 = nn.Linear(2, 1)
 
-    def forward(self, inputs, data_samples, mode='tensor'):
+    def forward(self, inputs, data_samples=None, mode='tensor'):
         if isinstance(inputs, list):
             inputs = torch.stack(inputs)
         if isinstance(data_samples, list):
-            data_sample = torch.stack(data_samples)
+            data_samples = torch.stack(data_samples)
         outputs = self.linear1(inputs)
         outputs = self.linear2(outputs)
 
         if mode == 'tensor':
             return outputs
         elif mode == 'loss':
-            loss = (data_sample - outputs).sum()
+            loss = (data_samples - outputs).sum()
             outputs = dict(loss=loss)
             return outputs
         elif mode == 'predict':
@@ -184,3 +185,12 @@ class RunnerTestCase(TestCase):
         os.environ['RANK'] = self.dist_cfg['RANK']
         os.environ['WORLD_SIZE'] = self.dist_cfg['WORLD_SIZE']
         os.environ['LOCAL_RANK'] = self.dist_cfg['LOCAL_RANK']
+
+    def clear_work_dir(self):
+        logging.shutdown()
+        for filename in os.listdir(self.temp_dir.name):
+            filepath = os.path.join(self.temp_dir.name, filename)
+            if os.path.isfile(filepath):
+                os.remove(filepath)
+            else:
+                shutil.rmtree(filepath)
